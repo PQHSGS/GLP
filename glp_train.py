@@ -1,3 +1,13 @@
+"""Core GLP training engine.
+
+This is the low-level trainer that consumes a prepared config file
+(for example: ``config=configs/train_llama1b_static.yaml``).
+
+Recommended usage for Kaggle:
+- Use ``train_glp.py`` for a user-friendly flow that infers dimensions,
+  writes config, and then launches this trainer.
+"""
+
 import logging
 import math
 import os

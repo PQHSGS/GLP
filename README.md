@@ -86,7 +86,7 @@ This repository includes two top-level scripts for a minimal end-to-end workflow
 
 ### 1) Collect activations
 ```bash
-python3 collect_acts.py \
+python3 scripts/glp_cli.py collect \
   --model-name google/gemma-2-2b \
   --layer 12 \
   --output-dir data/gemma2-2b-layer12-fineweb-1M \
@@ -104,7 +104,7 @@ python3 collect_acts.py \
 
 ### 2) Train GLP on collected activations
 ```bash
-python3 train_glp.py \
+python3 scripts/glp_cli.py train \
   --train-dataset data/gemma2-2b-layer12-fineweb-1M \
   --model-name google/gemma-2-2b \
   --layer 12 \
