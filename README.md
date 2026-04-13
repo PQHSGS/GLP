@@ -78,13 +78,29 @@ representing the first 1M activations of the full dynamic dataset.
 Even on this small dataset, you should see a beautiful loss curve that _just goes down_.
 You can also download the [Llama8B sanity dataset](https://huggingface.co/datasets/generative-latent-prior/llama8b-layer15-fineweb-1M). Training on the full one billion activations takes 5.6 days for the Llama8B GLP.
 
-## Kaggle-Friendly Workflow (Any HF Model)
-This repository includes two top-level scripts for a minimal end-to-end workflow:
+## Workflow CLI (Any HF Model)
+This repository includes a unified CLI for natively generating and training generic models:
 
-1. Collect activation dataset from any HuggingFace text dataset into GLP memmap format.
-2. Write a training config from those cached activations and launch training.
+You can either run the classic two-step persistent process (collecting the full dataset physically first, then training on the physical folder), or you can use the recommended unified **stream** processing block!
 
-### 1) Collect activations
+### 1) Recommended: Memory-Efficient Stream Training
+The `stream` command handles iteratively producing dataset buffers, yielding them logically to model optimization, and cleanly erasing out intermediate variables to preserve strict 0% permanent disk footprint bloat.
+```bash
+python3 scripts/glp_cli.py stream \
+  --stream-chunk-size 50000 \
+  --total-steps 10000 \
+  --batch-size 4096 \
+  --dataset-config sample-10BT \
+  --model-name google/gemma-2-2b-it \
+  --learning-rate 5e-5 \
+  --layer 14 \
+  --run-name glp-streaming-run
+```
+
+### 2) Classic Workflow (Two-Step Process)
+If you want to explicitly serialize cached activations for extensive validation manually:
+
+**Step A: Collect activations**
 ```bash
 python3 scripts/glp_cli.py collect \
   --model-name google/gemma-2-2b-it \
@@ -102,7 +118,7 @@ python3 scripts/glp_cli.py collect \
   --torch-dtype float32
 ```
 
-### 2) Train GLP on collected activations
+**Step B: Train GLP on explicitly saved activations**
 ```bash
 python3 scripts/glp_cli.py train \
   --train-dataset data/gemma2-2b-layer14-fineweb-1M \
@@ -116,8 +132,6 @@ python3 scripts/glp_cli.py train \
   --learning-rate 5e-5 \
   --wandb
 ```
-
-To only write config without starting training, add `--write-only`.
 
 ### Output dataset format
 `collect_acts.py` writes the same format used by `glp_train.py`:
@@ -133,7 +147,7 @@ Currently this codebase is in its initial release. All features marked as comple
 - [x] Release training code at `glp_train.py`
 - [x] Release Persona Vectors steering at `integrations/persona_vectors`
 - [x] Release 1-D probing at `glp/script_probe.py` 
-- [ ] Release dynamic producer-consumer data pipeline at `glp_save.py`
+- [x] Release dynamic producer-consumer data pipeline via `--stream`
 
 ## Citing
 ```
