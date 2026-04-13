@@ -3,7 +3,10 @@ import einops
 import torch
 import transformers
 
-from glp import flow_matching
+try:
+    from generative_latent_prior.glp import flow_matching
+except ImportError:
+    from glp import flow_matching
 
 # =========================
 #   Diffusion Functions

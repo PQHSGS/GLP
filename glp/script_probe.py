@@ -20,7 +20,10 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from joblib import Parallel, delayed
 
-from glp.denoiser import load_glp
+try:
+    from generative_latent_prior.glp.denoiser import load_glp
+except ImportError:
+    from glp.denoiser import load_glp
 
 # ====================================
 #    Logistic Regression Functions

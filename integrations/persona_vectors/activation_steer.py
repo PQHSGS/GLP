@@ -5,8 +5,12 @@ from typing import Sequence, Union, Iterable
 
 # NOTE: edited
 import os
-from glp.denoiser import load_glp
-from glp import script_steer
+try:
+    from generative_latent_prior.glp.denoiser import load_glp
+    from generative_latent_prior.glp import script_steer
+except ImportError:
+    from glp.denoiser import load_glp
+    from glp import script_steer
 
 def get_glp_postprocess(device):
     # https://github.com/safety-research/persona_vectors/blob/5faebb1c94b60509acb2f118d8ae85ab3b522fb4/eval/eval_persona.py#L49

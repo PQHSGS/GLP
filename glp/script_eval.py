@@ -11,8 +11,12 @@ from scipy import linalg
 import subprocess
 import torch
 
-from glp import flow_matching
-from glp.denoiser import load_glp
+try:
+    from generative_latent_prior.glp import flow_matching
+    from generative_latent_prior.glp.denoiser import load_glp
+except ImportError:
+    from glp import flow_matching
+    from glp.denoiser import load_glp
 
 # =======================
 #    Frechet Distance

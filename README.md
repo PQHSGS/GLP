@@ -78,6 +78,55 @@ representing the first 1M activations of the full dynamic dataset.
 Even on this small dataset, you should see a beautiful loss curve that _just goes down_.
 You can also download the [Llama8B sanity dataset](https://huggingface.co/datasets/generative-latent-prior/llama8b-layer15-fineweb-1M). Training on the full one billion activations takes 5.6 days for the Llama8B GLP.
 
+## Kaggle-Friendly Workflow (Any HF Model)
+This repository includes two top-level scripts for a minimal end-to-end workflow:
+
+1. Collect activation dataset from any HuggingFace text dataset into GLP memmap format.
+2. Write a training config from those cached activations and launch training.
+
+### 1) Collect activations
+```bash
+python3 collect_acts.py \
+  --model-name google/gemma-2-2b \
+  --layer 12 \
+  --output-dir data/gemma2-2b-layer12-fineweb-1M \
+  --dataset-name HuggingFaceFW/fineweb \
+  --dataset-config sample-10BT \
+  --split train \
+  --text-field text \
+  --max-documents 1000 \
+  --max-vectors 1000000 \
+  --token-idx all \
+  --drop-bos \
+  --device auto \
+  --torch-dtype float32
+```
+
+### 2) Train GLP on collected activations
+```bash
+python3 train_glp.py \
+  --train-dataset data/gemma2-2b-layer12-fineweb-1M \
+  --model-name google/gemma-2-2b \
+  --layer 12 \
+  --run-name glp-gemma2-2b-d3-static \
+  --config-out configs/train_gemma2_2b_static.yaml \
+  --denoiser-layers 3 \
+  --device auto \
+  --batch-size 4096 \
+  --learning-rate 5e-5 \
+  --wandb
+```
+
+To only write config without starting training, add `--write-only`.
+
+### Output dataset format
+`collect_acts.py` writes the same format used by `glp_train.py`:
+- `data_0000.npy`, `data_0001.npy`, ...
+- `data_indices.npy`
+- `dtype.txt`
+- `rep_statistics.pt`
+- `collection_summary.json`
+
 ## Roadmap
 Currently this codebase is in its initial release. All features marked as complete below are stable and ready to use. The others are still in progress.
 - [x] Release pre-trained GLP weights

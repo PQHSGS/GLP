@@ -16,8 +16,12 @@ from omegaconf import ListConfig, OmegaConf
 from torch.utils.data import ConcatDataset, DataLoader
 from tqdm import tqdm
 
-from glp.denoiser import Normalizer, GLP
-from glp.utils_acts import MemmapReader
+try:
+    from generative_latent_prior.glp.denoiser import Normalizer, GLP
+    from generative_latent_prior.glp.utils_acts import MemmapReader
+except ImportError:
+    from glp.denoiser import Normalizer, GLP
+    from glp.utils_acts import MemmapReader
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -158,13 +162,29 @@ def cosine_scheduler_with_warmup(step, *, warmup_steps, max_steps, initial_facto
     else:
         return cosine_scheduler(step - warmup_steps, max_steps - warmup_steps, 1.0, final_factor)
 
-def main(device="cuda:0"):
+def resolve_device(requested_device: Optional[str]) -> str:
+    if requested_device is None or requested_device == "auto":
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    if isinstance(requested_device, str) and requested_device.startswith("cuda"):
+        if torch.cuda.is_available():
+            return requested_device
+        logger.warning("CUDA requested (%s) but unavailable; falling back to CPU.", requested_device)
+        return "cpu"
+
+    return requested_device
+
+
+def main(device: Optional[str] = None):
     config_base = OmegaConf.structured(TrainConfig())
     OmegaConf.set_struct(config_base, False)
     config_cli = OmegaConf.from_cli()
     config_path = config_cli.pop("config", None)
     config_file = OmegaConf.load(config_path) if config_path else OmegaConf.create()
     config = OmegaConf.merge(config_base, config_file, config_cli)
+    resolved_device = resolve_device(config.get("device", device))
+    autocast_device_type = "cuda" if str(resolved_device).startswith("cuda") else "cpu"
+    use_autocast = bool(config.use_bf16 and autocast_device_type == "cuda")
 
     # setup output path
     output_path = Path(config.output_path)
@@ -180,9 +200,11 @@ def main(device="cuda:0"):
             while not os.path.exists(rep_statistic):
                 time.sleep(5)
 
-    torch.cuda.set_device(device)
-    torch.cuda.empty_cache()
+    if autocast_device_type == "cuda":
+        torch.cuda.set_device(resolved_device)
+        torch.cuda.empty_cache()
     logger.info(f"Config: {config}")
+    logger.info(f"Training device: {resolved_device}")
 
     # init wandb
     wandb_run = None
@@ -197,7 +219,7 @@ def main(device="cuda:0"):
 
     # load model
     model = GLP(**config.glp_kwargs)
-    model.to(device)
+    model.to(resolved_device)
     logger.info(f"Model param count: {sum(p.numel() for p in model.parameters())}")
 
     # load dataset
@@ -240,9 +262,9 @@ def main(device="cuda:0"):
             dynamic_ncols=True,
         )
         for step, batch in enumerate(train_dataloader):
-            batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
+            batch = {k: v.to(resolved_device) if v is not None else None for k, v in batch.items()}
 
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=config.use_bf16):
+            with torch.autocast(device_type=autocast_device_type, dtype=torch.bfloat16, enabled=use_autocast):
                 outputs = model(**batch)
                 loss = outputs.loss
 

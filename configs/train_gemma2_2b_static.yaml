@@ -1,0 +1,49 @@
+{
+  "save_root": ".",
+  "model_name": "google/gemma-2-2b",
+  "device": "auto",
+  "run_name": "glp-gemma2-2b-d3_static-1M",
+  "output_path": "./runs/glp-gemma2-2b-d3_static-1M",
+  "wandb_enabled": false,
+  "wandb_project": "glp",
+  "wandb_run_name": "glp-gemma2-2b-d3_static-1M",
+  "train_dataset": "./data/gemma2-2b-layer12-fineweb-1M",
+  "rep_statistic": "./data/gemma2-2b-layer12-fineweb-1M/rep_statistics.pt",
+  "num_epochs": 1,
+  "save_epochs": [
+    1
+  ],
+  "shuffle": true,
+  "glp_kwargs": {
+    "normalizer_config": {
+      "rep_statistic": "${rep_statistic}"
+    },
+    "denoiser_config": {
+      "d_input": 2304,
+      "d_model": 4608,
+      "d_mlp": 9216,
+      "n_layers": 3,
+      "multi_layer_n_layers": null
+    },
+    "tracedict_config": {
+      "layer_prefix": "model.layers",
+      "layers": [
+        12
+      ],
+      "retain": "output"
+    }
+  },
+  "use_bf16": false,
+  "learning_rate": 5e-05,
+  "batch_size": 4096,
+  "gradient_accumulation_steps": 1,
+  "gradient_clipping_threshold": 1.0,
+  "log_every_n_steps": 10,
+  "save_opt_state": true,
+  "lr_scheduler": {
+    "scheduler_cls": "cosine_scheduler_with_warmup",
+    "warmup_ratio": 0.01,
+    "initial_factor": 0.01,
+    "final_factor": 0.1
+  }
+}
