@@ -1,4 +1,7 @@
-from baukit import TraceDict
+try:
+    from baukit import TraceDict
+except ImportError:
+    TraceDict = None
 from collections import OrderedDict
 from dataclasses import dataclass
 import einops
@@ -26,6 +29,12 @@ def save_acts(
     batch_size: int = 10,
     max_length: int = 2048
 ):
+    if TraceDict is None:
+        raise ImportError(
+            "Missing dependency 'baukit'. Install with: "
+            "pip install git+https://github.com/davidbau/baukit"
+        )
+
     # set up tracedict
     tracedict_config = dict(tracedict_config)
     retain_attr = tracedict_config.pop("retain")
@@ -53,7 +62,8 @@ def save_acts(
         )
         minibatch = {k: v.to(hf_model.device) for k, v in minibatch.items()}
         with TraceDict(hf_model, **tracedict_config) as miniret:
-            hf_model(**minibatch)
+            # Disable KV cache during activation extraction to reduce VRAM use.
+            hf_model(**minibatch, use_cache=False)
         miniret = [getattr(miniret[l], retain_attr) for l in tracedict_config["layers"]]
         miniret = [x[0] if type(x) is tuple else x for x in miniret]
         miniret = torch.stack(miniret)

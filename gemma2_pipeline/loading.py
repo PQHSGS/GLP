@@ -42,6 +42,9 @@ def load_model_and_tokenizer(
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch_dtype)
     model = model.to(resolved_device)
+    model.config.use_cache = False
+    if getattr(model, "generation_config", None) is not None:
+        model.generation_config.use_cache = False
     model.eval()
     return model, tokenizer
 

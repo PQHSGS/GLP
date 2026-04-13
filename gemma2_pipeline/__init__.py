@@ -1,4 +1,4 @@
-"""Standalone GLP pipeline utilities for Gemma-2-2B."""
+"""Standalone GLP pipeline utilities for Gemma-2-2B-IT."""
 
 __all__ = [
     "settings",

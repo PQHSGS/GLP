@@ -87,9 +87,9 @@ This repository includes two top-level scripts for a minimal end-to-end workflow
 ### 1) Collect activations
 ```bash
 python3 scripts/glp_cli.py collect \
-  --model-name google/gemma-2-2b \
+  --model-name google/gemma-2-2b-it \
   --layer 12 \
-  --output-dir data/gemma2-2b-layer12-fineweb-1M \
+  --output-dir data/gemma2-2b-layer14-fineweb-1M \
   --dataset-name HuggingFaceFW/fineweb \
   --dataset-config sample-10BT \
   --split train \
@@ -105,8 +105,8 @@ python3 scripts/glp_cli.py collect \
 ### 2) Train GLP on collected activations
 ```bash
 python3 scripts/glp_cli.py train \
-  --train-dataset data/gemma2-2b-layer12-fineweb-1M \
-  --model-name google/gemma-2-2b \
+  --train-dataset data/gemma2-2b-layer14-fineweb-1M \
+  --model-name google/gemma-2-2b-it \
   --layer 12 \
   --run-name glp-gemma2-2b-d3-static \
   --config-out configs/train_gemma2_2b_static.yaml \

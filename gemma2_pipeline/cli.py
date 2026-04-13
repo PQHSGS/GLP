@@ -99,12 +99,12 @@ def _test_subcommand(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Standalone Gemma-2-2B GLP pipeline")
+    parser = argparse.ArgumentParser(description="Standalone Gemma-2-2B-IT GLP pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     collect = subparsers.add_parser("collect", help="Collect FineWeb activations")
-    collect.add_argument("--model-name", default="google/gemma-2-2b")
-    collect.add_argument("--output-dir", default="data/gemma2-2b-layer12-fineweb-1M")
+    collect.add_argument("--model-name", default="google/gemma-2-2b-it")
+    collect.add_argument("--output-dir", default="data/gemma2-2b-layer14-fineweb-1M")
     collect.add_argument("--layer", type=int, default=12)
     collect.add_argument("--max-length", type=int, default=2048)
     collect.add_argument("--token-idx", choices=["last", "all"], default="all")
@@ -127,9 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     write_cfg = subparsers.add_parser("write-train-config", help="Write Gemma GLP YAML config")
     write_cfg.add_argument("--save-root", default=".")
-    write_cfg.add_argument("--model-name", default="google/gemma-2-2b")
+    write_cfg.add_argument("--model-name", default="google/gemma-2-2b-it")
     write_cfg.add_argument("--run-name", default="glp-gemma2-2b-d3_static-1M")
-    write_cfg.add_argument("--train-dataset", default="./data/gemma2-2b-layer12-fineweb-1M")
+    write_cfg.add_argument("--train-dataset", default="./data/gemma2-2b-layer14-fineweb-1M")
     write_cfg.add_argument("--rep-statistic", default=None)
     write_cfg.add_argument("--denoiser-layers", type=int, default=3)
     write_cfg.add_argument("--layer", type=int, default=12)

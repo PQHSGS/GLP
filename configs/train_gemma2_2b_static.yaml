@@ -1,14 +1,14 @@
 {
   "save_root": ".",
-  "model_name": "google/gemma-2-2b",
+  "model_name": "google/gemma-2-2b-it",
   "device": "auto",
   "run_name": "glp-gemma2-2b-d3_static-1M",
   "output_path": "./runs/glp-gemma2-2b-d3_static-1M",
   "wandb_enabled": false,
   "wandb_project": "glp",
   "wandb_run_name": "glp-gemma2-2b-d3_static-1M",
-  "train_dataset": "./data/gemma2-2b-layer12-fineweb-1M",
-  "rep_statistic": "./data/gemma2-2b-layer12-fineweb-1M/rep_statistics.pt",
+  "train_dataset": "./data/gemma2-2b-layer14-fineweb-1M",
+  "rep_statistic": "./data/gemma2-2b-layer14-fineweb-1M/rep_statistics.pt",
   "num_epochs": 1,
   "save_epochs": [
     1

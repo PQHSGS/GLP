@@ -21,8 +21,8 @@ class FineWebSourceConfig:
 class ActivationCollectionConfig:
     """Configuration for collecting Gemma activations into memmaps."""
 
-    model_name: str = "google/gemma-2-2b"
-    output_dir: str = "data/gemma2-2b-layer12-fineweb-1M"
+    model_name: str = "google/gemma-2-2b-it"
+    output_dir: str = "data/gemma2-2b-layer14-fineweb-1M"
     layer: int = 12
     max_length: int = 2048
     token_idx: Literal["last", "all"] = "all"
@@ -48,9 +48,9 @@ class GemmaTrainConfig:
     """Configuration for writing and launching GLP training."""
 
     save_root: str = "."
-    model_name: str = "google/gemma-2-2b"
+    model_name: str = "google/gemma-2-2b-it"
     run_name: str = "glp-gemma2-2b-d3_static-1M"
-    train_dataset: str = "./data/gemma2-2b-layer12-fineweb-1M"
+    train_dataset: str = "./data/gemma2-2b-layer14-fineweb-1M"
     rep_statistic: Optional[str] = None
     num_epochs: int = 1
     save_epochs: list[int] = field(default_factory=lambda: [1])
@@ -60,7 +60,7 @@ class GemmaTrainConfig:
     d_mlp: int = 9216
     denoiser_layers: int = 3
     multi_layer_n_layers: Optional[int] = None
-    layer: int = 12
+    layer: int = 14
     retain: str = "output"
     device: str = "auto"
     use_bf16: bool = False
