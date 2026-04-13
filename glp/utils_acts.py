@@ -10,6 +10,7 @@ import numpy as np
 import os
 from pathlib import Path
 import torch
+import torch.nn.functional as F
 from typing import Literal
 from tqdm import tqdm
 from tqdm import trange
@@ -76,6 +77,16 @@ def save_acts(
         else:
             raise NotImplementedError
         ret.append(miniret)
+    if token_idx == "all" and len(ret) > 1:
+        max_seq_len = max(t.shape[2] for t in ret)
+        if any(t.shape[2] != max_seq_len for t in ret):
+            ret = [
+                F.pad(t, (0, 0, 0, max_seq_len - t.shape[2]))
+                if t.shape[2] != max_seq_len
+                else t
+                for t in ret
+            ]
+
     ret = torch.cat(ret, dim=0)
     return ret
 
