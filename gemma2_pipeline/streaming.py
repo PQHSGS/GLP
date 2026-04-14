@@ -98,6 +98,40 @@ def stream_train(args):
     global_step = 0
     pbar = tqdm(total=total_steps, desc="Streaming GLP")
     
+    total_tokens_collected = 0
+    next_checkpoint_target = args.checkpoint_token_step if getattr(args, "checkpoint_token_step", None) else float('inf')
+    
+    def save_glp_checkpoint(save_dir: Path):
+        save_dir.mkdir(parents=True, exist_ok=True)
+        glp_model.save_pretrained(path=save_dir, name="final")
+        save_rep_statistics(stats, save_dir / "rep_statistics.pt")
+        
+        import yaml
+        d_model = args.d_model_mult * hidden_size
+        d_mlp = args.d_mlp_mult * hidden_size
+        config_dict = {
+            "model_name": args.model_name,
+            "glp_kwargs": {
+                "normalizer_config": {
+                    "rep_statistic": "rep_statistics.pt"
+                },
+                "denoiser_config": {
+                    "d_input": hidden_size,
+                    "d_model": d_model,
+                    "d_mlp": d_mlp,
+                    "n_layers": args.denoiser_layers,
+                    "multi_layer_n_layers": None,
+                },
+                "tracedict_config": {
+                    "layer_prefix": "model.layers",
+                    "layers": [args.layer],
+                    "retain": "output",
+                }
+            }
+        }
+        with open(save_dir / "config.yaml", "w") as f:
+            yaml.dump(config_dict, f)
+    
     tracedict_config = {
         "layer_prefix": "model.layers",
         "layers": [args.layer],
@@ -189,6 +223,23 @@ def stream_train(args):
             if wandb_run and global_step % 10 == 0:
                 wandb_run.log({"train/step": global_step, "train/loss": loss.item(), "train/learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
 
+        total_tokens_collected += vectors_written
+        if total_tokens_collected >= next_checkpoint_target:
+            def format_tokens(t):
+                if t >= 1_000_000 and t % 1_000_000 == 0:
+                    return f"{t // 1_000_000}M"
+                if t >= 1_000 and t % 1_000 == 0:
+                    return f"{t // 1_000}K"
+                return str(t)
+            
+            milestone_str = format_tokens(int(next_checkpoint_target))
+            milestone_dir = Path(args.save_root) / args.run_name / milestone_str
+            save_glp_checkpoint(milestone_dir)
+            LOGGER.info(f"Saved checkpoint at {total_tokens_collected} tokens to {milestone_dir}")
+            
+            while next_checkpoint_target <= total_tokens_collected:
+                next_checkpoint_target += getattr(args, "checkpoint_token_step", float('inf'))
+
     pbar.close()
     if wandb_run: wandb_run.finish()
     
@@ -196,8 +247,6 @@ def stream_train(args):
         shutil.rmtree(tmp_dir)
         
     out_dir = Path(args.save_root) / args.run_name
-    out_dir.mkdir(parents=True, exist_ok=True)
-    glp_model.save_pretrained(path=out_dir, name="final")
-    save_rep_statistics(stats, out_dir / "rep_statistics.pt")
+    save_glp_checkpoint(out_dir)
     
     LOGGER.info(f"Stream training complete! Model saved to {out_dir}")

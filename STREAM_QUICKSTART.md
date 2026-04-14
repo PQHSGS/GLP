@@ -26,7 +26,7 @@ You need to authenticate to Hugging Face to download the language models (like G
 hf auth login
 
 # Login to Weights & Biases
-wandb login
+wandb login 
 ```
 
 ## 3. Run Training
@@ -34,8 +34,9 @@ Copy and paste the command below into your terminal to start the streaming pipel
 
 ```bash
 python3 scripts/glp_cli.py stream \
+  --device cuda \
   --stream-chunk-size 50000 \
-  --total-steps 10000 \
+  --total-steps 250000 \
   --batch-size 4096 \
   --dataset-config sample-10BT \
   --model-name google/gemma-2-2b-it \
