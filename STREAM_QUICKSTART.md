@@ -30,7 +30,7 @@ wandb login
 Copy and paste the command below into your terminal to start the streaming pipeline. It will handle loading the Gemma model, iteratively reading the FineWeb dataset without hoarding space, and optimizing the diffusion GLP network natively.
 
 ```bash
-python3 scripts/glp_cli.py stream \
+python3 cli/glp_cli.py stream \
   --device cuda \
   --stream-chunk-size 50000 \
   --total-steps 250000 \
