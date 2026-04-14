@@ -5,15 +5,12 @@ This guide provides the exact commands needed to set up the environment and laun
 ## 1. Setup Environment
 First, clone the repository and set up the Python environment using Conda.
 ```bash
-# Clone the repository and navigate inside
 git clone <repository_url>
 cd GLP
 
-# Create and activate the strict conda environment
 conda env create -f environment.yaml
 conda activate glp
 
-# Install PyTorch dependencies (Must be done locally in this exact order to avoid conflicts)
 pip install vllm==0.9.2 
 pip install transformers==4.47.0
 pip install -e .

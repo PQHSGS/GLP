@@ -15,7 +15,7 @@ data/
 runs/
 wandb/
 glp-stream/
-scripts/
+#scripts/
 # OS/editor
 .DS_Store
 Thumbs.db
