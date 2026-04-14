@@ -14,7 +14,7 @@ __pycache__/
 data/
 runs/
 wandb/
-
+glp-stream/
 # OS/editor
 .DS_Store
 Thumbs.db

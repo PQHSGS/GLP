@@ -11,7 +11,7 @@ class FineWebSourceConfig:
     split: str = "train"
     text_field: str = "text"
     streaming: bool = True
-    max_documents: Optional[int] = 1000
+    max_documents: Optional[int] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

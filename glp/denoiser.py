@@ -63,11 +63,16 @@ class Normalizer(nn.Module):
             )
 
     @classmethod
-    def from_config(cls, rep_statistic):
-        rep_statistic_pt = torch.load(rep_statistic, map_location="cpu")
-        rep_mean = rep_statistic_pt["mean"]
-        rep_var = rep_statistic_pt["var"]
-        return cls(rep_mean, rep_var)
+    def from_config(cls, rep_statistic="", d_input=None):
+        if rep_statistic:
+            rep_statistic_pt = torch.load(rep_statistic, map_location="cpu")
+            rep_mean = rep_statistic_pt["mean"]
+            rep_var = rep_statistic_pt["var"]
+            return cls(rep_mean, rep_var)
+        
+        
+        dim = d_input if d_input is not None else 1
+        return cls(torch.zeros(dim), torch.ones(dim))
 
     def save_config(self, path):
         path = Path(path)

@@ -30,7 +30,7 @@ def setup_glp_model(hidden_size, args):
     d_mlp = args.d_mlp_mult * hidden_size
     
     model = GLP(
-        normalizer_config={"rep_statistic": ""}, # Ignored as we update manual
+        normalizer_config={"rep_statistic": "", "d_input": hidden_size}, # Initializes identity buffer of right shape
         denoiser_config={
             "d_input": hidden_size,
             "d_model": d_model,
@@ -54,7 +54,7 @@ def stream_train(args):
     hf_model, hf_tokenizer = load_model_and_tokenizer(
         args.model_name,
         device=device,
-        torch_dtype_name="float32",
+        torch_dtype_name=getattr(args, "torch_dtype", "bfloat16"),
     )
     hidden_size = int(hf_model.config.hidden_size)
     
@@ -89,6 +89,7 @@ def stream_train(args):
         dataset_config=args.dataset_config,
         split=args.split,
         text_field=args.text_field,
+        max_documents=args.max_documents,
         streaming=True
     )
     text_iter = iter_fineweb_texts(fineweb)
@@ -138,20 +139,25 @@ def stream_train(args):
             remaining = args.stream_chunk_size - vectors_written
             vectors = vectors[:remaining]
             
-            stats.update(vectors.detach().cpu().numpy())
             storage_vectors = to_storage_array(vectors, "float32")
+            stats.update(storage_vectors)
+            
             for row in storage_vectors:
                 writer.write(np.ascontiguousarray(row))
             
             vectors_written += int(storage_vectors.shape[0])
             
         writer.flush()
+        if vectors_written == 0:
+            LOGGER.warning("No vectors generated in this chunk (dataset exhausted?). Halting training loop early.")
+            break
+        
         
         # Inject dynamic stats
         if stats.count > 0:
-            glp_model.normalizer.mean = torch.tensor(stats.mean, dtype=torch.float32, device=device)
-            var = stats.var if stats.count > 1 else np.ones_like(stats.mean)
-            glp_model.normalizer.std = torch.tensor(np.sqrt(var), dtype=torch.float32, device=device)
+            mean, var = stats.finalize()
+            glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
+            glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
         
         train_dataset = load_activation_dataset(str(tmp_dir))
         train_dataloader = get_activation_dataloader(
