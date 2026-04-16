@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 
@@ -11,20 +13,70 @@ from glp.script_steer import (
     generate_with_intervention_wrapper,
 )
 from gemma2_pipeline.loading import load_model_and_tokenizer
-from glp.utils_acts import save_acts
+
+
+def _resolve_vector_file(path: str) -> tuple[Path, Path | None]:
+    """Resolve vector file from either a folder or a direct .pt path."""
+    target = Path(path).expanduser()
+    vector_file = target / "vector.pt" if target.is_dir() else target
+    metadata_file = target / "metadata.json" if target.is_dir() else None
+
+    if not vector_file.exists():
+        raise FileNotFoundError(f"Vector file not found: {vector_file}")
+
+    if metadata_file is not None and not metadata_file.exists():
+        metadata_file = None
+
+    return vector_file, metadata_file
+
+
+def _load_layer_vector(vector_file: Path, layer: int) -> torch.Tensor:
+    """Load one layer vector from a .pt payload."""
+    payload = torch.load(vector_file, map_location="cpu")
+
+    if torch.is_tensor(payload):
+        return payload
+
+    if not isinstance(payload, dict):
+        raise TypeError(f"Expected tensor or dict in {vector_file}, got {type(payload)}")
+
+    vec = payload.get(layer)
+    if vec is None:
+        vec = payload.get(str(layer))
+    if vec is None:
+        raise ValueError(f"Layer {layer} not found in {vector_file}. Available keys: {list(payload.keys())}")
+    if not torch.is_tensor(vec):
+        raise TypeError(f"Layer {layer} in {vector_file} is not a tensor")
+    return vec
+
 
 def get_steering_vector(path, layer, device):
     """Loads a pre-computed CAA steering vector."""
-    print(f"Loading dense steering vector from {path}...")
-    vec_dict = torch.load(path)
-    if layer not in vec_dict:
-        raise ValueError(f"Vector for layer {layer} not found in {path}. Available keys: {list(vec_dict.keys())}")
-    vec = vec_dict[layer].to(device)
+    vector_file, metadata_file = _resolve_vector_file(path)
+    print(f"Loading dense steering vector from {vector_file}...")
+    vec = _load_layer_vector(vector_file, layer=layer)
+
+    if metadata_file is not None:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+        metadata_layer = metadata.get("layer", metadata.get("layer_idx"))
+        if metadata_layer is not None and int(metadata_layer) != int(layer):
+            print(
+                f"WARNING: metadata layer ({metadata_layer}) does not match --layer ({layer}); "
+                f"using --layer={layer}."
+            )
+
+    vec = vec.to(device)
     # Ensure it's a 1D tensor
     if vec.ndim > 1:
         vec = vec.squeeze()
+    if vec.ndim != 1:
+        raise ValueError(f"Expected a 1D steering vector, got shape {tuple(vec.shape)} from {vector_file}")
+
     # L2 Normalize the vector to ensure coeff scale is consistent
-    vec = vec / torch.norm(vec)
+    norm = torch.norm(vec)
+    if norm.item() == 0:
+        raise ValueError(f"Steering vector from {vector_file} has zero norm; cannot normalize")
+    vec = vec / norm
     return vec
 
 def main():
@@ -34,7 +86,7 @@ def main():
     parser.add_argument("--checkpoint", default="final", help="Checkpoint name to load. Use 'final' or a milestone folder name like '100M'.")
     parser.add_argument("--layer", type=int, default=14)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--vector-path", default="../Vector/CAA/extracted/Gemma/refusal_response/vector.pt")
+    parser.add_argument("--vector-path", default="../Vector/CAA/extracted/Gemma/refusal_response/vector.pt", help="Path to vector .pt file or folder containing vector.pt (+ optional metadata.json)")
     parser.add_argument("--u", type=float, default=0.5, help="Interpolation scale for GLP (0 to 1, higher is closer to noise)")
     parser.add_argument("--coeff", type=float, default=20.0, help="Steering vector multiplier")
     parser.add_argument("--num-timesteps", type=int, default=20, help="Denoising steps for GLP")
