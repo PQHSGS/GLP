@@ -298,18 +298,38 @@ class GLP(nn.Module):
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final"):
-    if not os.path.exists(f"{weights_folder}/{checkpoint}"):
-        # speed up downloading the main checkpoint
+    """
+    Load GLP from either:
+    - local folder path
+    - Hugging Face repo id (auto-downloaded via snapshot_download)
+
+    The checkpoint can be:
+    - "final" (loads final.safetensors)
+    - a milestone folder name under the root (e.g. "100M")
+    """
+    resolved_folder = Path(weights_folder).expanduser()
+
+    # If a local folder is provided, use it directly.
+    # Otherwise treat input as a Hub repo id and download it.
+    if not resolved_folder.exists():
         ignore_patterns = ["checkpoints/*"] if checkpoint == "final" else None
         local_dir = snapshot_download(
             repo_id=weights_folder,
-            ignore_patterns=ignore_patterns
+            ignore_patterns=ignore_patterns,
         )
-        weights_folder = local_dir
-    config = OmegaConf.load(f"{weights_folder}/config.yaml")
-    config.rep_statistic = f"{weights_folder}/rep_statistics.pt"
+        resolved_folder = Path(local_dir)
+
+    # Allow loading a milestone subfolder when checkpoint names a directory.
+    # Example: root/100M/{config.yaml, rep_statistics.pt, final.safetensors}
+    checkpoint_dir = resolved_folder / checkpoint
+    if checkpoint != "final" and checkpoint_dir.is_dir():
+        resolved_folder = checkpoint_dir
+        checkpoint = "final"
+
+    config = OmegaConf.load(str(resolved_folder / "config.yaml"))
+    config.rep_statistic = str(resolved_folder / "rep_statistics.pt")
     OmegaConf.resolve(config)
     model = GLP(**config.glp_kwargs)
     model.to(device)
-    model.load_pretrained(weights_folder, name=checkpoint)
+    model.load_pretrained(resolved_folder, name=checkpoint)
     return model

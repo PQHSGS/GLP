@@ -30,7 +30,8 @@ def get_steering_vector(path, layer, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="google/gemma-2-2b-it")
-    parser.add_argument("--glp-dir", default="glp-stream")
+    parser.add_argument("--glp-dir", default="glp-stream", help="Local GLP folder or Hugging Face repo id (e.g. username/glp-gemma)")
+    parser.add_argument("--checkpoint", default="final", help="Checkpoint name to load. Use 'final' or a milestone folder name like '100M'.")
     parser.add_argument("--layer", type=int, default=14)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--vector-path", default="../Vector/CAA/extracted/Gemma/refusal_response/vector.pt")
@@ -51,13 +52,9 @@ def main():
         torch_dtype_name="bfloat16"
     )
 
-    # 2. Load GLP
-    if not os.path.exists(args.glp_dir):
-        print(f"ERROR: GLP model directory '{args.glp_dir}' not found!")
-        return
-        
-    print(f"Loading GLP from {args.glp_dir}...")
-    glp_model = load_glp(args.glp_dir, device=args.device, checkpoint="final")
+    # 2. Load GLP (local folder or auto-download from Hub repo id)
+    print(f"Loading GLP from {args.glp_dir} (checkpoint: {args.checkpoint})...")
+    glp_model = load_glp(args.glp_dir, device=args.device, checkpoint=args.checkpoint)
 
     # 3. Extract Steering Vector on the fly
     steer_vec = get_steering_vector(
