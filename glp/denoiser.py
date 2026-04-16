@@ -185,8 +185,11 @@ class TransformerMLPDenoiser(nn.Module):
         t_emb = timestep_embedding(timesteps, self.d_model, repeat_only=False)
         emb = self.time_embed(t_emb)
         # prepare sinusoidal layer depth embedding
-        layer_depth = None if layer_idx is None else layer_idx.float() / (self.multi_layer_n_layers - 1)
-        if layer_depth is not None:
+        use_layer_embed = self.multi_layer_n_layers is not None and layer_idx is not None
+        if use_layer_embed:
+            if self.multi_layer_n_layers <= 1:
+                raise ValueError("multi_layer_n_layers must be > 1 when using layer_idx")
+            layer_depth = layer_idx.float() / (self.multi_layer_n_layers - 1)
             layer_emb = timestep_embedding(layer_depth, self.d_model, repeat_only=False)
             emb += self.layer_embed(layer_emb)
         # apply MLP blocks

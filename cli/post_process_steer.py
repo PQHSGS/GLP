@@ -79,6 +79,44 @@ def get_steering_vector(path, layer, device):
     vec = vec / norm
     return vec
 
+
+def run_generation_case(*, title, generate_fn, user_prompt, hf_model, hf_tokenizer, max_new_tokens, layer_name=None, steer_vec=None, coeff=None, postprocess_fn=None):
+    print("\n" + "=" * 80)
+    print(title)
+    print("=" * 80)
+
+    generate_kwargs = {"max_new_tokens": max_new_tokens, "do_sample": False}
+    layers = [] if layer_name is None else [layer_name]
+
+    if layer_name is None:
+        output = generate_fn(
+            text=[user_prompt],
+            hf_model=hf_model,
+            hf_processor=hf_tokenizer,
+            generate_kwargs=generate_kwargs,
+            layers=layers,
+            intervention_wrapper=None,
+        )
+    else:
+        intervention_kwargs = {
+            "w": steer_vec,
+            "alphas": torch.tensor([float(coeff)]),
+        }
+        if postprocess_fn is not None:
+            intervention_kwargs["postprocess_fn"] = postprocess_fn
+
+        output = generate_fn(
+            text=[user_prompt],
+            hf_model=hf_model,
+            hf_processor=hf_tokenizer,
+            generate_kwargs=generate_kwargs,
+            layers=layers,
+            intervention_wrapper=addition_intervention,
+            intervention_kwargs=intervention_kwargs,
+        )
+
+    print(output[0].replace(user_prompt, ""))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="google/gemma-2-2b-it")
@@ -130,38 +168,43 @@ def main():
     # Gemma 2 format
     user_prompt = f"<bos><start_of_turn>user\n{args.prompt}<end_of_turn>\n<start_of_turn>model\n"
 
-    # --- UNSTEERED ---
-    print("\n" + "="*80)
-    print("🚀 UNSTEERED GENERATION")
-    print("="*80)
-    out_unsteered = generate_fn(
-        text=[user_prompt],
+    # 1) Normal
+    run_generation_case(
+        title="🚀 NORMAL GENERATION",
+        generate_fn=generate_fn,
+        user_prompt=user_prompt,
         hf_model=hf_model,
-        hf_processor=hf_tokenizer,
-        generate_kwargs={"max_new_tokens": args.max_new_tokens, "do_sample": False},
-        layers=[],
-        intervention_wrapper=None
+        hf_tokenizer=hf_tokenizer,
+        max_new_tokens=args.max_new_tokens,
     )
-    print(out_unsteered[0].replace(user_prompt, ""))
 
-    # --- STEERED ---
-    print("\n" + "="*80)
-    print(f"🚀 STEERED GENERATION (coeff: {args.coeff}, GLP u: {args.u})")
-    print("="*80)
-    out_steered = generate_fn(
-        text=[user_prompt],
+    # 2) Steer only (no GLP post-process)
+    run_generation_case(
+        title=f"🚀 STEER ONLY (no GLP, coeff: {args.coeff})",
+        generate_fn=generate_fn,
+        user_prompt=user_prompt,
         hf_model=hf_model,
-        hf_processor=hf_tokenizer,
-        generate_kwargs={"max_new_tokens": args.max_new_tokens, "do_sample": False},
-        layers=[layer_name],
-        intervention_wrapper=addition_intervention,
-        intervention_kwargs={
-            "w": steer_vec,
-            "alphas": torch.tensor([float(args.coeff)]),
-            "postprocess_fn": postprocess_on_manifold
-        }
+        hf_tokenizer=hf_tokenizer,
+        max_new_tokens=args.max_new_tokens,
+        layer_name=layer_name,
+        steer_vec=steer_vec,
+        coeff=args.coeff,
     )
-    print(out_steered[0].replace(user_prompt, ""))
+
+    # 3) Steer + GLP
+    run_generation_case(
+        title=f"🚀 STEER + GLP (coeff: {args.coeff}, GLP u: {args.u})",
+        generate_fn=generate_fn,
+        user_prompt=user_prompt,
+        hf_model=hf_model,
+        hf_tokenizer=hf_tokenizer,
+        max_new_tokens=args.max_new_tokens,
+        layer_name=layer_name,
+        steer_vec=steer_vec,
+        coeff=args.coeff,
+        postprocess_fn=postprocess_on_manifold,
+    )
+
     print("\nDone!")
 
 if __name__ == "__main__":

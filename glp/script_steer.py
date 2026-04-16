@@ -36,6 +36,7 @@ def postprocess_on_manifold_wrapper(model, u=0.5, num_timesteps=20, layer_idx=No
             noisy_latents,
             start_timestep=timesteps[0].item(),
             num_timesteps=num_timesteps,
+            show_progress=False,
             layer_idx=layer_idx
         )
         latents = model.normalizer.denormalize(latents, layer_idx=layer_idx)
