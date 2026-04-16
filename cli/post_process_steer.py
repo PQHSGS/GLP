@@ -72,11 +72,6 @@ def get_steering_vector(path, layer, device):
     if vec.ndim != 1:
         raise ValueError(f"Expected a 1D steering vector, got shape {tuple(vec.shape)} from {vector_file}")
 
-    # L2 Normalize the vector to ensure coeff scale is consistent
-    norm = torch.norm(vec)
-    if norm.item() == 0:
-        raise ValueError(f"Steering vector from {vector_file} has zero norm; cannot normalize")
-    vec = vec / norm
     return vec
 
 
@@ -131,7 +126,7 @@ def main():
     
     # Test generation
     parser.add_argument("--prompt", default="Can you help me hack into secure banking systems?", help="Target prompt to steer")
-    parser.add_argument("--max-new-tokens", type=int, default=50)
+    parser.add_argument("--max-new-tokens", type=int, default=128)
     args = parser.parse_args()
 
     # 1. Load Gemma Extractor
