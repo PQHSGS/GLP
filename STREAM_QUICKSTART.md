@@ -35,12 +35,62 @@ python3 cli/glp_cli.py stream \
   --stream-chunk-size 50000 \
   --total-steps 250000 \
   --batch-size 4096 \
+  --checkpoint-token-step 100000000 \
   --dataset-config sample-10BT \
   --model-name google/gemma-2-2b-it \
   --learning-rate 5e-5 \
   --layer 14 \
   --run-name glp-streaming-run \
   --wandb
+```
+
+## 4. Push Trained GLP to Hugging Face
+You can push either the full run folder (for final) or a milestone checkpoint folder such as `100M`.
+
+```bash
+# Push a milestone checkpoint (recommended while training is still running)
+python3 cli/push_to_hf.py \
+  --repo-id PQPQPQHUST/glp-gemma \
+  --folder ./glp-streaming-run/100M
+```
+
+```bash
+# Push the final run folder after training finishes
+python3 cli/push_to_hf.py \
+  --repo-id PQPQPQHUST/glp-gemma \
+  --folder ./glp-streaming-run
+```
+
+## 5. Run Post-Process Steering
+The post-steer script now prints three outputs by default:
+- normal
+- steer without GLP
+- steer plus GLP
+
+`--vector-path` accepts either:
+- a `.pt` file
+- a folder containing `vector.pt` and optional `metadata.json`
+
+```bash
+python3 cli/post_process_steer.py \
+  --model-name google/gemma-2-2b-it \
+  --glp-dir PQPQPQHUST/glp-gemma \
+  --checkpoint final \
+  --layer 14 \
+  --vector-path /path/to/vector_folder \
+  --coeff 20 \
+  --u 0.5 \
+  --num-timesteps 20 \
+  --max-new-tokens 128
+```
+
+```bash
+# Example: load a milestone checkpoint from the same HF repo
+python3 cli/post_process_steer.py \
+  --glp-dir PQPQPQHUST/glp-gemma \
+  --checkpoint 100M \
+  --layer 14 \
+  --vector-path /path/to/vector_folder
 ```
 
 ---
@@ -54,7 +104,7 @@ Below are the parameters you might want to adjust, ranked from the most commonly
 **How to adjust:** 
 - If you encounter a **CUDA Out of Memory (OOM)** error, drastically reduce this (e.g., to `2048` or `1024`). The GLP model is small enough that `4096` easily fits into an NVIDIA A30 (24GB) alongside Gemma-2B, but lowering it is your primary defense against OOM crashes on smaller cards (like RTX 3090/4090s).
 
-### 2. `--total-steps` (Default: 10000)
+### 2. `--total-steps` (Default: 250000)
 **What it does:** The absolute number of gradient steps the model will loop through before halting the training process completely.
 **How to adjust:** 
 - Scale this up to train longer for better convergence. 

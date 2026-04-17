@@ -331,6 +331,15 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final"):
 
     config = OmegaConf.load(str(resolved_folder / "config.yaml"))
     config.rep_statistic = str(resolved_folder / "rep_statistics.pt")
+    # rep_stats_path = str(resolved_folder / "rep_statistics.pt")
+
+    # # Streaming checkpoints store this path under glp_kwargs.normalizer_config.
+    # # Rewrite it to an absolute local path when loading from Hub snapshots.
+    # if "glp_kwargs" in config and "normalizer_config" in config.glp_kwargs:
+    #     config.glp_kwargs.normalizer_config.rep_statistic = rep_stats_path
+    # # Fallback for older/alternate config shapes.
+    # elif "rep_statistic" in config:
+    #     config.rep_statistic = rep_stats_path
     OmegaConf.resolve(config)
     model = GLP(**config.glp_kwargs)
     model.to(device)

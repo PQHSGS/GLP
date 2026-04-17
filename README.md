@@ -86,10 +86,12 @@ You can either run the classic two-step persistent process (collecting the full 
 ### 1) Recommended: Memory-Efficient Stream Training
 The `stream` command handles iteratively producing dataset buffers, yielding them logically to model optimization, and cleanly erasing out intermediate variables to preserve strict 0% permanent disk footprint bloat.
 ```bash
-python3 scripts/glp_cli.py stream \
+python3 cli/glp_cli.py stream \
+  --device cuda \
   --stream-chunk-size 50000 \
-  --total-steps 10000 \
+  --total-steps 250000 \
   --batch-size 4096 \
+  --checkpoint-token-step 100000000 \
   --dataset-config sample-10BT \
   --model-name google/gemma-2-2b-it \
   --learning-rate 5e-5 \
@@ -102,7 +104,7 @@ If you want to explicitly serialize cached activations for extensive validation 
 
 **Step A: Collect activations**
 ```bash
-python3 scripts/glp_cli.py collect \
+python3 cli/glp_cli.py collect \
   --model-name google/gemma-2-2b-it \
   --layer 12 \
   --output-dir data/gemma2-2b-layer14-fineweb-1M \
@@ -120,7 +122,7 @@ python3 scripts/glp_cli.py collect \
 
 **Step B: Train GLP on explicitly saved activations**
 ```bash
-python3 scripts/glp_cli.py train \
+python3 cli/glp_cli.py train \
   --train-dataset data/gemma2-2b-layer14-fineweb-1M \
   --model-name google/gemma-2-2b-it \
   --layer 12 \
@@ -131,6 +133,57 @@ python3 scripts/glp_cli.py train \
   --batch-size 4096 \
   --learning-rate 5e-5 \
   --wandb
+```
+
+### 3) Push Trained GLP to Hugging Face
+Use the helper uploader to publish checkpoints or final models.
+
+```bash
+# Push a milestone checkpoint while training is running
+python3 cli/push_to_hf.py \
+  --repo-id <hf_username>/glp-gemma \
+  --folder ./glp-streaming-run/100M
+```
+
+```bash
+# Push final run folder after training finishes
+python3 cli/push_to_hf.py \
+  --repo-id <hf_username>/glp-gemma \
+  --folder ./glp-streaming-run
+```
+
+### 4) Post-Process Steering CLI
+Run post steering with a local GLP folder or directly from a Hugging Face repo id.
+
+The script outputs three generations by default:
+- normal
+- steer without GLP
+- steer plus GLP
+
+`--vector-path` supports:
+- a direct `.pt` file
+- a folder containing `vector.pt` and optional `metadata.json`
+
+```bash
+python3 cli/post_process_steer.py \
+  --model-name google/gemma-2-2b-it \
+  --glp-dir <hf_username>/glp-gemma \
+  --checkpoint final \
+  --layer 14 \
+  --vector-path /path/to/vector_folder \
+  --coeff 20 \
+  --u 0.5 \
+  --num-timesteps 20 \
+  --max-new-tokens 128
+```
+
+```bash
+# Example: evaluate a milestone checkpoint from the same repo
+python3 cli/post_process_steer.py \
+  --glp-dir <hf_username>/glp-gemma \
+  --checkpoint 100M \
+  --layer 14 \
+  --vector-path /path/to/vector_folder
 ```
 
 ### Output dataset format
