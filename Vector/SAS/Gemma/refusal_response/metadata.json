@@ -1,0 +1,271 @@
+{
+  "method": "SAS",
+  "top_idx": {
+    "14": [
+      15567,
+      16023,
+      7580,
+      14509,
+      3125,
+      12912,
+      8286,
+      8009,
+      5080,
+      1677,
+      15548,
+      12727,
+      12343,
+      10475,
+      8709
+    ]
+  },
+  "sparse_latent": {
+    "14": {
+      "layout": "torch.sparse_coo",
+      "size": [
+        16384
+      ],
+      "indices": [
+        [
+          831,
+          1677,
+          3125,
+          5080,
+          5152,
+          7580,
+          8009,
+          8286,
+          8709,
+          10475,
+          12343,
+          12727,
+          12912,
+          13230,
+          14509,
+          15548,
+          15567,
+          16023
+        ]
+      ],
+      "values": [
+        4.544180870056152,
+        -5.849803447723389,
+        -7.786022186279297,
+        -5.861083984375,
+        -4.779730796813965,
+        11.886853218078613,
+        -6.061607360839844,
+        6.499537944793701,
+        -4.975828647613525,
+        5.111778736114502,
+        -5.377259254455566,
+        5.435956954956055,
+        7.170721530914307,
+        4.836697101593018,
+        -7.873771667480469,
+        5.734872817993164,
+        -21.459999084472656,
+        -14.403390884399414
+      ]
+    }
+  },
+  "feature_tracker": {
+    "14": [
+      {
+        "rank": 1,
+        "feature_index": 15567,
+        "target_activation_frequency": 0.19285714626312256,
+        "target_feature_mean": 3.880000114440918,
+        "target_feature_value_variation": 9.953995576900075,
+        "contrast_activation_frequency": 0.25,
+        "contrast_feature_mean": 5.364999771118164,
+        "contrast_feature_value_variation": 11.403852305348009,
+        "activation_frequency_delta": -0.05714285373687744,
+        "feature_mean_delta": -1.484999656677246,
+        "feature_value_variation_delta": -1.4498567284479336
+      },
+      {
+        "rank": 2,
+        "feature_index": 16023,
+        "target_activation_frequency": 0.0,
+        "target_feature_mean": 0.0,
+        "target_feature_value_variation": 0.0,
+        "contrast_activation_frequency": 0.21857142448425293,
+        "contrast_feature_mean": 3.148169755935669,
+        "contrast_feature_value_variation": 7.024810675278395,
+        "activation_frequency_delta": -0.21857142448425293,
+        "feature_mean_delta": -3.148169755935669,
+        "feature_value_variation_delta": -7.024810675278395
+      },
+      {
+        "rank": 3,
+        "feature_index": 7580,
+        "target_activation_frequency": 0.28999999165534973,
+        "target_feature_mean": 3.4471874237060547,
+        "target_feature_value_variation": 5.93968926033993,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.28999999165534973,
+        "feature_mean_delta": 3.4471874237060547,
+        "feature_value_variation_delta": 5.93968926033993
+      },
+      {
+        "rank": 4,
+        "feature_index": 14509,
+        "target_activation_frequency": 0.015714285895228386,
+        "target_feature_mean": 0.08446428924798965,
+        "target_feature_value_variation": 0.6944034383515995,
+        "contrast_activation_frequency": 0.3271428644657135,
+        "contrast_feature_mean": 2.57584810256958,
+        "contrast_feature_value_variation": 4.091396104746638,
+        "activation_frequency_delta": -0.3114285785704851,
+        "feature_mean_delta": -2.4913838133215904,
+        "feature_value_variation_delta": -3.3969926663950383
+      },
+      {
+        "rank": 5,
+        "feature_index": 3125,
+        "target_activation_frequency": 0.17571428418159485,
+        "target_feature_mean": 1.0862499475479126,
+        "target_feature_value_variation": 2.434847995526937,
+        "contrast_activation_frequency": 0.28999999165534973,
+        "contrast_feature_mean": 2.257946491241455,
+        "contrast_feature_value_variation": 3.763254207395827,
+        "activation_frequency_delta": -0.11428570747375488,
+        "feature_mean_delta": -1.1716965436935425,
+        "feature_value_variation_delta": -1.3284062118688902
+      },
+      {
+        "rank": 6,
+        "feature_index": 12912,
+        "target_activation_frequency": 0.21285714209079742,
+        "target_feature_mean": 1.5263392925262451,
+        "target_feature_value_variation": 3.053980642293684,
+        "contrast_activation_frequency": 0.1785714328289032,
+        "contrast_feature_mean": 1.2538169622421265,
+        "contrast_feature_value_variation": 2.8116153233701695,
+        "activation_frequency_delta": 0.034285709261894226,
+        "feature_mean_delta": 0.27252233028411865,
+        "feature_value_variation_delta": 0.24236531892351465
+      },
+      {
+        "rank": 7,
+        "feature_index": 8286,
+        "target_activation_frequency": 0.28999999165534973,
+        "target_feature_mean": 1.8848661184310913,
+        "target_feature_value_variation": 3.0968587303396395,
+        "contrast_activation_frequency": 0.17428570985794067,
+        "contrast_feature_mean": 1.251383900642395,
+        "contrast_feature_value_variation": 2.925355713446316,
+        "activation_frequency_delta": 0.11571428179740906,
+        "feature_mean_delta": 0.6334822177886963,
+        "feature_value_variation_delta": 0.1715030168933236
+      },
+      {
+        "rank": 8,
+        "feature_index": 8009,
+        "target_activation_frequency": 0.15857142210006714,
+        "target_feature_mean": 0.8998660445213318,
+        "target_feature_value_variation": 2.1370437076340836,
+        "contrast_activation_frequency": 0.25,
+        "contrast_feature_mean": 1.515401840209961,
+        "contrast_feature_value_variation": 2.730655125321596,
+        "activation_frequency_delta": -0.09142857789993286,
+        "feature_mean_delta": -0.6155357956886292,
+        "feature_value_variation_delta": -0.5936114176875122
+      },
+      {
+        "rank": 9,
+        "feature_index": 5080,
+        "target_activation_frequency": 0.09714286029338837,
+        "target_feature_mean": 0.47410714626312256,
+        "target_feature_value_variation": 1.5207940644561047,
+        "contrast_activation_frequency": 0.36571428179740906,
+        "contrast_feature_mean": 2.143482208251953,
+        "contrast_feature_value_variation": 3.1272788039556874,
+        "activation_frequency_delta": -0.2685714215040207,
+        "feature_mean_delta": -1.6693750619888306,
+        "feature_value_variation_delta": -1.6064847394995827
+      },
+      {
+        "rank": 10,
+        "feature_index": 1677,
+        "target_activation_frequency": 0.17571428418159485,
+        "target_feature_mean": 0.950580358505249,
+        "target_feature_value_variation": 2.136201520300025,
+        "contrast_activation_frequency": 0.272857129573822,
+        "contrast_feature_mean": 1.5961607694625854,
+        "contrast_feature_value_variation": 2.6980678116145635,
+        "activation_frequency_delta": -0.09714284539222717,
+        "feature_mean_delta": -0.6455804109573364,
+        "feature_value_variation_delta": -0.5618662913145385
+      },
+      {
+        "rank": 11,
+        "feature_index": 15548,
+        "target_activation_frequency": 0.22428570687770844,
+        "target_feature_mean": 1.2862499952316284,
+        "target_feature_value_variation": 2.467505886310969,
+        "contrast_activation_frequency": 0.08571428805589676,
+        "contrast_feature_mean": 0.4524107277393341,
+        "contrast_feature_value_variation": 1.5341484408997268,
+        "activation_frequency_delta": 0.13857141882181168,
+        "feature_mean_delta": 0.8338392674922943,
+        "feature_value_variation_delta": 0.9333574454112423
+      },
+      {
+        "rank": 12,
+        "feature_index": 12727,
+        "target_activation_frequency": 0.2314285784959793,
+        "target_feature_mean": 1.258035659790039,
+        "target_feature_value_variation": 2.3241315125128326,
+        "contrast_activation_frequency": 0.17428570985794067,
+        "contrast_feature_mean": 0.9065625071525574,
+        "contrast_feature_value_variation": 1.99501082013515,
+        "activation_frequency_delta": 0.057142868638038635,
+        "feature_mean_delta": 0.3514731526374817,
+        "feature_value_variation_delta": 0.3291206923776826
+      },
+      {
+        "rank": 13,
+        "feature_index": 12343,
+        "target_activation_frequency": 0.06142857298254967,
+        "target_feature_mean": 0.327544629573822,
+        "target_feature_value_variation": 1.3126034980834798,
+        "contrast_activation_frequency": 0.23714286088943481,
+        "contrast_feature_mean": 1.2751785516738892,
+        "contrast_feature_value_variation": 2.345206595476892,
+        "activation_frequency_delta": -0.17571428790688515,
+        "feature_mean_delta": -0.9476339221000671,
+        "feature_value_variation_delta": -1.0326030973934122
+      },
+      {
+        "rank": 14,
+        "feature_index": 10475,
+        "target_activation_frequency": 0.20428571105003357,
+        "target_feature_mean": 1.0442633628845215,
+        "target_feature_value_variation": 2.0799894261106897,
+        "contrast_activation_frequency": 0.19571428000926971,
+        "contrast_feature_mean": 0.9546428322792053,
+        "contrast_feature_value_variation": 1.9506439730848586,
+        "activation_frequency_delta": 0.008571431040763855,
+        "feature_mean_delta": 0.08962053060531616,
+        "feature_value_variation_delta": 0.12934545302583111
+      },
+      {
+        "rank": 15,
+        "feature_index": 8709,
+        "target_activation_frequency": 0.08571428805589676,
+        "target_feature_mean": 0.42093750834465027,
+        "target_feature_value_variation": 1.4056801420495038,
+        "contrast_activation_frequency": 0.25857141613960266,
+        "contrast_feature_mean": 1.2866071462631226,
+        "contrast_feature_value_variation": 2.233147532557428,
+        "activation_frequency_delta": -0.1728571280837059,
+        "feature_mean_delta": -0.8656696379184723,
+        "feature_value_variation_delta": -0.8274673905079244
+      }
+    ]
+  }
+}

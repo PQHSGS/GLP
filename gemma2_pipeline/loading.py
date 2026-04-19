@@ -9,15 +9,15 @@ from .preprocess import clean_text, is_valid_text
 from .settings import FineWebSourceConfig
 
 
-def resolve_device(device: str) -> str:
-    requested = (device or "auto").strip().lower()
-    if requested == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
+# def resolve_device(device: str) -> str:
+#     requested = (device or "auto").strip().lower()
+#     if requested == "auto":
+#         return "cuda" if torch.cuda.is_available() else "cpu"
 
-    if requested.startswith("cuda") and not torch.cuda.is_available():
-        return "cpu"
+#     if requested.startswith("cuda") and not torch.cuda.is_available():
+#         return "cpu"
 
-    return device
+#     return device
 
 
 def parse_torch_dtype(dtype_name: str) -> torch.dtype:
@@ -37,11 +37,10 @@ def load_model_and_tokenizer(
     device: str,
     torch_dtype_name: str,
 ) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
-    resolved_device = resolve_device(device)
     torch_dtype = parse_torch_dtype(torch_dtype_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch_dtype)
-    model = model.to(resolved_device)
+    model = model.to(device)
     model.config.use_cache = False
     if getattr(model, "generation_config", None) is not None:
         model.generation_config.use_cache = False

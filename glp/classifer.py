@@ -1,127 +1,140 @@
-# glp/classifier.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from glp.denoiser import timestep_embedding
+import math
 
+# -----------------------------
+# Utility: Sinusoidal Embedding
+# -----------------------------
+class SinusoidalPosEmb(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
 
+    def forward(self, x):
+        """
+        x: (B,) tensor of timesteps
+        Returns: (B, dim) tensor of embeddings
+        """
+        device = x.device
+        half_dim = self.dim // 2
+        emb = math.log(10000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+        emb = x[:, None] * emb[None, :]
+        emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
+        return emb
+
+# -----------------------------
+# Main Classifier
+# -----------------------------
 class ConceptClassifier(nn.Module):
-    """
-    Classifier p_φ(y=1 | z_t, t) cho Classifier Guidance.
-    
-    Design choices:
-    - Input: noisy activation z_t (d_input dim) + timestep t
-    - Kiến trúc: MLP với residual connections
-    - Tương tự TransformerMLPBlock của GLP nhưng nhỏ hơn
-    - Output: scalar logit → sigmoid → probability
-    
-
-    """
     def __init__(
         self,
-        d_input,          # activation dim: 2048 (Llama1B) or 4096 (Llama8B)
-        d_model=256,      # hidden dim — nhỏ hơn GLP để train nhanh
-        d_mlp=512,        # MLP expansion
-        n_layers=4,       # đủ để nonlinear, không quá sâu
-        t_embed_dim=256,  # timestep embedding dim
+        d_input,
+        d_model=256,
+        d_mlp=512,
+        n_layers=4,
+        cond_dim=128,      
     ):
         super().__init__()
-        self.d_input = d_input
-        self.d_model = d_model
-        self.t_embed_dim = t_embed_dim
 
-        # 1. Timestep embedding (giống GLP gốc)
-        self.time_embed = nn.Sequential(
-            nn.Linear(t_embed_dim, t_embed_dim),
+        # 1. High-frequency sinusoidal mapping for t
+        self.time_embed = SinusoidalPosEmb(cond_dim)
+
+        # 2. MLP to process the embedded time
+        self.cond_mlp = nn.Sequential(
+            nn.Linear(cond_dim, cond_dim),
             nn.SiLU(),
-            nn.Linear(t_embed_dim, t_embed_dim),
+            nn.Linear(cond_dim, cond_dim),
+            nn.SiLU(),
         )
 
-        # 2. Input projection: z_t (d_input) → d_model
+        # Input projection
         self.in_proj = nn.Linear(d_input, d_model)
 
-        # 3. MLP blocks với residual + timestep conditioning
+        # Residual blocks
         self.layers = nn.ModuleList([
             ClassifierMLPBlock(
                 d_model=d_model,
                 d_mlp=d_mlp,
-                t_embed_dim=t_embed_dim,
+                cond_dim=cond_dim,
             )
             for _ in range(n_layers)
         ])
 
-        # 4. Output head: d_model → 1 (binary classification)
+        # Output head
         self.out_norm = nn.LayerNorm(d_model)
         self.out_proj = nn.Linear(d_model, 1)
 
     def forward(self, z_t, t):
-        """
-        Args:
-            z_t: (B, d_input) — noisy activation tại timestep t
-            t:   (B,)         — timestep values trong [0, 1]
-        Returns:
-            logits: (B,) — raw logit (chưa sigmoid)
-        """
-        # timestep embedding
-        t_emb = timestep_embedding(
-            t.flatten(),
-            self.t_embed_dim
-        ).to(z_t.dtype)                          # (B, t_embed_dim)
-        t_emb = self.time_embed(t_emb)           # (B, t_embed_dim)
+        # -------------------------
+        # Compute conditioning features
+        # -------------------------
+        # Pass raw t (B,) through sinusoidal -> (B, cond_dim)
+        t_freq = self.time_embed(t) 
+        cond_emb = self.cond_mlp(t_freq) 
 
-        # project input
-        x = self.in_proj(z_t)                    # (B, d_model)
+        # -------------------------
+        # Input
+        # -------------------------
+        x = self.in_proj(z_t)
 
-        # MLP blocks
+        # -------------------------
+        # Residual blocks
+        # -------------------------
         for layer in self.layers:
-            x = layer(x, t_emb)                  # (B, d_model)
+            x = layer(x, cond_emb)
 
-        # output
-        x = self.out_norm(x)                     # (B, d_model)
-        logit = self.out_proj(x).squeeze(-1)     # (B,)
+        # -------------------------
+        # Output
+        # -------------------------
+        x = self.out_norm(x)
+        logit = self.out_proj(x).squeeze(-1)
+
         return logit
 
     def log_prob(self, z_t, t):
-        """Convenience function để dùng trong guidance."""
         return F.logsigmoid(self.forward(z_t, t))
 
-
+# -----------------------------
+# Residual Block with FiLM
+# -----------------------------
 class ClassifierMLPBlock(nn.Module):
     """
-    MLP block cho classifier.
-    Giống TransformerMLPBlock của GLP nhưng:
-    - Không có layer_idx conditioning (không cần)
-    - LayerNorm trước (pre-norm) thay vì sau
-    - Timestep conditioning qua multiplicative gate
-      (giống GLP gốc để consistent)
+    MLP block with:
+    - Pre-norm
+    - SwiGLU
+    - Full FiLM conditioning (scale + shift)
     """
-    def __init__(self, d_model, d_mlp, t_embed_dim):
+
+    def __init__(self, d_model, d_mlp, cond_dim):
         super().__init__()
+
         self.norm = nn.LayerNorm(d_model)
 
-        # SwiGLU (giống GLP)
+        # SwiGLU
         self.up_proj   = nn.Linear(d_model, d_mlp)
         self.gate_proj = nn.Linear(d_model, d_mlp)
         self.down_proj = nn.Linear(d_mlp, d_model)
         self.act = nn.SiLU()
 
-        # timestep conditioning (giống GLP)
-        self.time_proj = nn.Linear(t_embed_dim, d_mlp)
+        # FiLM conditioning
+        self.scale_proj = nn.Linear(cond_dim, d_model)
+        self.shift_proj = nn.Linear(cond_dim, d_model)
 
-    def forward(self, x, t_emb):
-        """
-        x:     (B, d_model)
-        t_emb: (B, t_embed_dim)
-        """
+    def forward(self, x, cond_emb):
         resid = x
         x = self.norm(x)
 
-        # SwiGLU với timestep modulation
-        gate = self.gate_proj(x)
-        t    = self.time_proj(t_emb)
-        gate = gate * t                  # multiplicative conditioning
-        x    = self.act(gate) * self.up_proj(x)
-        x    = self.down_proj(x)
+        # FiLM modulation
+        scale = self.scale_proj(cond_emb)
+        shift = self.shift_proj(cond_emb)
+        x = (1 + scale) * x + shift
 
-        return x + resid                 # residual connection
+        # SwiGLU
+        gate = self.gate_proj(x)
+        up   = self.up_proj(x)
+        x = self.act(gate) * up
+        x = self.down_proj(x)
+
+        return x + resid

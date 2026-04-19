@@ -1,0 +1,265 @@
+{
+  "method": "CORRSTEER",
+  "top_idx": {
+    "14": [
+      11069,
+      2401,
+      2949,
+      14769,
+      11105,
+      1689,
+      11106,
+      10549,
+      4768,
+      1329,
+      14992,
+      15297,
+      12576,
+      4408,
+      1976
+    ]
+  },
+  "sparse_latent": {
+    "14": {
+      "layout": "torch.sparse_coo",
+      "size": [
+        16384
+      ],
+      "indices": [
+        [
+          1329,
+          1689,
+          1976,
+          2401,
+          2949,
+          4408,
+          4768,
+          10549,
+          11069,
+          11105,
+          11106,
+          12576,
+          14769,
+          14992,
+          15297
+        ]
+      ],
+      "values": [
+        0.58984375,
+        2.4375,
+        6.5625,
+        2.0,
+        1.6953125,
+        0.65625,
+        2.9375,
+        0.79296875,
+        4.65625,
+        1.234375,
+        1.8984375,
+        0.609375,
+        1.625,
+        7.15625,
+        30.875
+      ]
+    }
+  },
+  "selected_features": {
+    "14": [
+      {
+        "feature_index": 11069,
+        "correlation": 0.4024641811847687,
+        "coefficient": 4.670985221862793
+      },
+      {
+        "feature_index": 2401,
+        "correlation": 0.3767152726650238,
+        "coefficient": 2.005004405975342
+      },
+      {
+        "feature_index": 2949,
+        "correlation": 0.33878231048583984,
+        "coefficient": 1.698064923286438
+      },
+      {
+        "feature_index": 14769,
+        "correlation": 0.2927684485912323,
+        "coefficient": 1.6249443292617798
+      },
+      {
+        "feature_index": 11105,
+        "correlation": 0.2672240138053894,
+        "coefficient": 1.2369328737258911
+      },
+      {
+        "feature_index": 1689,
+        "correlation": 0.2442033737897873,
+        "coefficient": 2.4414479732513428
+      },
+      {
+        "feature_index": 11106,
+        "correlation": 0.2207048386335373,
+        "coefficient": 1.8953514099121094
+      },
+      {
+        "feature_index": 10549,
+        "correlation": 0.21735303103923798,
+        "coefficient": 0.7934830784797668
+      },
+      {
+        "feature_index": 4768,
+        "correlation": 0.21187084913253784,
+        "coefficient": 2.935220241546631
+      },
+      {
+        "feature_index": 1329,
+        "correlation": 0.2045762985944748,
+        "coefficient": 0.5899688601493835
+      },
+      {
+        "feature_index": 14992,
+        "correlation": 0.20383645594120026,
+        "coefficient": 7.163478374481201
+      },
+      {
+        "feature_index": 15297,
+        "correlation": 0.19265522062778473,
+        "coefficient": 30.816280364990234
+      },
+      {
+        "feature_index": 12576,
+        "correlation": 0.19110973179340363,
+        "coefficient": 0.6098754405975342
+      },
+      {
+        "feature_index": 4408,
+        "correlation": 0.18901027739048004,
+        "coefficient": 0.6548042893409729
+      },
+      {
+        "feature_index": 1976,
+        "correlation": 0.1878902018070221,
+        "coefficient": 6.56138801574707
+      }
+    ]
+  },
+  "layer_mode": "foreach",
+  "pool": "max",
+  "steer_pool": "max",
+  "pos_only": true,
+  "neg_only": false,
+  "decode": false,
+  "raw": false,
+  "reverse": false,
+  "selection": "correlation",
+  "caacoeff": false,
+  "max_new_tokens": 1,
+  "feature_tracker": {
+    "14": [
+      {
+        "rank": 1,
+        "feature_index": 11069,
+        "activation_frequency": 0.6740196078431373,
+        "feature_mean": 3.8808212280273438,
+        "feature_value_variation": 2.9203945170395795
+      },
+      {
+        "rank": 2,
+        "feature_index": 2401,
+        "activation_frequency": 0.28431372549019607,
+        "feature_mean": 1.420764446258545,
+        "feature_value_variation": 2.306903924966898
+      },
+      {
+        "rank": 3,
+        "feature_index": 2949,
+        "activation_frequency": 0.21323529411764705,
+        "feature_mean": 1.169500708580017,
+        "feature_value_variation": 2.3207509350371507
+      },
+      {
+        "rank": 4,
+        "feature_index": 14769,
+        "activation_frequency": 0.18872549019607843,
+        "feature_mean": 1.1398208141326904,
+        "feature_value_variation": 2.4647872576752166
+      },
+      {
+        "rank": 5,
+        "feature_index": 11105,
+        "activation_frequency": 0.17401960784313725,
+        "feature_mean": 0.8846890926361084,
+        "feature_value_variation": 1.9607363894838061
+      },
+      {
+        "rank": 6,
+        "feature_index": 1689,
+        "activation_frequency": 0.33088235294117646,
+        "feature_mean": 1.9633119106292725,
+        "feature_value_variation": 2.9124015758779644
+      },
+      {
+        "rank": 7,
+        "feature_index": 11106,
+        "activation_frequency": 0.3553921568627451,
+        "feature_mean": 1.5773590803146362,
+        "feature_value_variation": 2.143168309459576
+      },
+      {
+        "rank": 8,
+        "feature_index": 10549,
+        "activation_frequency": 0.11029411764705882,
+        "feature_mean": 0.556755542755127,
+        "feature_value_variation": 1.6200723279188711
+      },
+      {
+        "rank": 9,
+        "feature_index": 4768,
+        "activation_frequency": 0.5269607843137255,
+        "feature_mean": 2.578737735748291,
+        "feature_value_variation": 2.5027568333393675
+      },
+      {
+        "rank": 10,
+        "feature_index": 1329,
+        "activation_frequency": 0.08823529411764706,
+        "feature_mean": 0.40632662177085876,
+        "feature_value_variation": 1.3352686101544848
+      },
+      {
+        "rank": 11,
+        "feature_index": 14992,
+        "activation_frequency": 0.9950980392156863,
+        "feature_mean": 6.987132549285889,
+        "feature_value_variation": 1.286874247183907
+      },
+      {
+        "rank": 12,
+        "feature_index": 15297,
+        "activation_frequency": 1.0,
+        "feature_mean": 30.145221710205078,
+        "feature_value_variation": 5.181229279927127
+      },
+      {
+        "rank": 13,
+        "feature_index": 12576,
+        "activation_frequency": 0.10294117647058823,
+        "feature_mean": 0.44159775972366333,
+        "feature_value_variation": 1.3097705823476675
+      },
+      {
+        "rank": 14,
+        "feature_index": 4408,
+        "activation_frequency": 0.10049019607843138,
+        "feature_mean": 0.4730392396450043,
+        "feature_value_variation": 1.4304618913126967
+      },
+      {
+        "rank": 15,
+        "feature_index": 1976,
+        "activation_frequency": 0.9705882352941176,
+        "feature_mean": 6.366804599761963,
+        "feature_value_variation": 1.5404699089890372
+      }
+    ]
+  }
+}

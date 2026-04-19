@@ -1,0 +1,8 @@
+{
+  "method": "CAST",
+  "conditional_layer": null,
+  "conditional_vector": null,
+  "has_conditional_vector": false,
+  "n_target": 408,
+  "n_contrast": 408
+}

@@ -1,0 +1,12 @@
+{
+  "method": "SAE-FREE",
+  "layer": [
+    14
+  ],
+  "n_pairs": 360,
+  "component_idx": -1,
+  "position": -2,
+  "center_diffs": false,
+  "cov_normalize": false,
+  "align_sign": true
+}

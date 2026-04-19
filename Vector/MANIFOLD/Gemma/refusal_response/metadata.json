@@ -1,0 +1,7 @@
+{
+  "method": "MANIFOLD",
+  "manifold_dim": 10,
+  "explained_variance_ratio": {
+    "14": 0.519366979598999
+  }
+}

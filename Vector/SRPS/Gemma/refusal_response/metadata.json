@@ -1,0 +1,266 @@
+{
+  "method": "SRPS",
+  "top_idx": {
+    "14": [
+      11051,
+      11421,
+      7214,
+      7580,
+      15643,
+      12039,
+      12498,
+      579,
+      5905,
+      8327,
+      10203,
+      8359,
+      12408,
+      10842,
+      6706
+    ]
+  },
+  "sparse_latent": {
+    "14": {
+      "__sparse_tensor__": true,
+      "layout": "torch.sparse_coo",
+      "size": [
+        16384
+      ],
+      "indices": [
+        [
+          579,
+          5905,
+          6706,
+          7214,
+          7580,
+          8327,
+          8359,
+          10203,
+          10842,
+          11051,
+          11421,
+          12039,
+          12408,
+          12498,
+          15643
+        ]
+      ],
+      "values": [
+        5.3125,
+        1.1953125,
+        1.203125,
+        10.3125,
+        3.453125,
+        1.3046875,
+        1.265625,
+        1.1484375,
+        0.953125,
+        5.46875,
+        5.28125,
+        1.5625,
+        1.0390625,
+        1.4296875,
+        2.28125
+      ]
+    }
+  },
+  "feature_tracker": {
+    "14": [
+      {
+        "rank": 1,
+        "feature_index": 11051,
+        "target_activation_frequency": 0.18000000715255737,
+        "target_feature_mean": 5.477142810821533,
+        "target_feature_value_variation": 11.832613121792761,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.18000000715255737,
+        "feature_mean_delta": 5.477142810821533,
+        "feature_value_variation_delta": 11.832613121792761
+      },
+      {
+        "rank": 2,
+        "feature_index": 11421,
+        "target_activation_frequency": 0.18000000715255737,
+        "target_feature_mean": 5.291428565979004,
+        "target_feature_value_variation": 11.349139561646739,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.18000000715255737,
+        "feature_mean_delta": 5.291428565979004,
+        "feature_value_variation_delta": 11.349139561646739
+      },
+      {
+        "rank": 3,
+        "feature_index": 7214,
+        "target_activation_frequency": 0.37714284658432007,
+        "target_feature_mean": 10.291518211364746,
+        "target_feature_value_variation": 17.069335378924237,
+        "contrast_activation_frequency": 0.2785714268684387,
+        "contrast_feature_mean": 5.693392753601074,
+        "contrast_feature_value_variation": 11.71891330711714,
+        "activation_frequency_delta": 0.09857141971588135,
+        "feature_mean_delta": 4.598125457763672,
+        "feature_value_variation_delta": 5.350422071807097
+      },
+      {
+        "rank": 4,
+        "feature_index": 7580,
+        "target_activation_frequency": 0.28999999165534973,
+        "target_feature_mean": 3.4471874237060547,
+        "target_feature_value_variation": 5.93968926033993,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.28999999165534973,
+        "feature_mean_delta": 3.4471874237060547,
+        "feature_value_variation_delta": 5.93968926033993
+      },
+      {
+        "rank": 5,
+        "feature_index": 15643,
+        "target_activation_frequency": 0.18000000715255737,
+        "target_feature_mean": 2.279107093811035,
+        "target_feature_value_variation": 4.976537695173051,
+        "contrast_activation_frequency": 0.02142857201397419,
+        "contrast_feature_mean": 0.3388392925262451,
+        "contrast_feature_value_variation": 2.331661292996118,
+        "activation_frequency_delta": 0.15857143513858318,
+        "feature_mean_delta": 1.94026780128479,
+        "feature_value_variation_delta": 2.644876402176933
+      },
+      {
+        "rank": 6,
+        "feature_index": 12039,
+        "target_activation_frequency": 0.17428570985794067,
+        "target_feature_mean": 1.5634821653366089,
+        "target_feature_value_variation": 3.783265215755646,
+        "contrast_activation_frequency": 0.0014285714132711291,
+        "contrast_feature_mean": 0.014642857015132904,
+        "contrast_feature_value_variation": 0.38713675304162376,
+        "activation_frequency_delta": 0.17285713844466954,
+        "feature_mean_delta": 1.548839308321476,
+        "feature_value_variation_delta": 3.3961284627140222
+      },
+      {
+        "rank": 7,
+        "feature_index": 12498,
+        "target_activation_frequency": 0.18714286386966705,
+        "target_feature_mean": 1.4328794479370117,
+        "target_feature_value_variation": 3.267881935117414,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.18714286386966705,
+        "feature_mean_delta": 1.4328794479370117,
+        "feature_value_variation_delta": 3.267881935117414
+      },
+      {
+        "rank": 8,
+        "feature_index": 579,
+        "target_activation_frequency": 0.6700000166893005,
+        "target_feature_mean": 5.311696529388428,
+        "target_feature_value_variation": 4.841270046766456,
+        "contrast_activation_frequency": 0.5299999713897705,
+        "contrast_feature_mean": 3.681874990463257,
+        "contrast_feature_value_variation": 3.9509713458643847,
+        "activation_frequency_delta": 0.14000004529953003,
+        "feature_mean_delta": 1.629821538925171,
+        "feature_value_variation_delta": 0.8902987009020715
+      },
+      {
+        "rank": 9,
+        "feature_index": 5905,
+        "target_activation_frequency": 0.18857142329216003,
+        "target_feature_mean": 1.197857141494751,
+        "target_feature_value_variation": 2.6045742850326095,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.18857142329216003,
+        "feature_mean_delta": 1.197857141494751,
+        "feature_value_variation_delta": 2.6045742850326095
+      },
+      {
+        "rank": 10,
+        "feature_index": 8327,
+        "target_activation_frequency": 0.14428570866584778,
+        "target_feature_mean": 1.3080357313156128,
+        "target_feature_value_variation": 3.3711489224053475,
+        "contrast_activation_frequency": 0.004285714123398066,
+        "contrast_feature_mean": 0.01830357126891613,
+        "contrast_feature_value_variation": 0.2793983099209994,
+        "activation_frequency_delta": 0.1399999945424497,
+        "feature_mean_delta": 1.2897321600466967,
+        "feature_value_variation_delta": 3.091750612484348
+      },
+      {
+        "rank": 11,
+        "feature_index": 10203,
+        "target_activation_frequency": 0.18714286386966705,
+        "target_feature_mean": 1.1503125429153442,
+        "target_feature_value_variation": 2.4913543686337873,
+        "contrast_activation_frequency": 0.012857142835855484,
+        "contrast_feature_mean": 0.05785714462399483,
+        "contrast_feature_value_variation": 0.5114980103298301,
+        "activation_frequency_delta": 0.17428572103381157,
+        "feature_mean_delta": 1.0924553982913494,
+        "feature_value_variation_delta": 1.9798563583039572
+      },
+      {
+        "rank": 12,
+        "feature_index": 8359,
+        "target_activation_frequency": 0.1428571492433548,
+        "target_feature_mean": 1.269508957862854,
+        "target_feature_value_variation": 3.3805316310104137,
+        "contrast_activation_frequency": 0.011428571306169033,
+        "contrast_feature_mean": 0.062366072088479996,
+        "contrast_feature_value_variation": 0.6078827788539394,
+        "activation_frequency_delta": 0.13142857793718576,
+        "feature_mean_delta": 1.207142885774374,
+        "feature_value_variation_delta": 2.7726488521564745
+      },
+      {
+        "rank": 13,
+        "feature_index": 12408,
+        "target_activation_frequency": 0.15857142210006714,
+        "target_feature_mean": 1.0379687547683716,
+        "target_feature_value_variation": 2.506788972130386,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.15857142210006714,
+        "feature_mean_delta": 1.0379687547683716,
+        "feature_value_variation_delta": 2.506788972130386
+      },
+      {
+        "rank": 14,
+        "feature_index": 10842,
+        "target_activation_frequency": 0.16857142746448517,
+        "target_feature_mean": 0.9527678489685059,
+        "target_feature_value_variation": 2.177909701828589,
+        "contrast_activation_frequency": 0.0,
+        "contrast_feature_mean": 0.0,
+        "contrast_feature_value_variation": 0.0,
+        "activation_frequency_delta": 0.16857142746448517,
+        "feature_mean_delta": 0.9527678489685059,
+        "feature_value_variation_delta": 2.177909701828589
+      },
+      {
+        "rank": 15,
+        "feature_index": 6706,
+        "target_activation_frequency": 0.15857142210006714,
+        "target_feature_mean": 1.201562523841858,
+        "target_feature_value_variation": 2.9541126646101223,
+        "contrast_activation_frequency": 0.019999999552965164,
+        "contrast_feature_mean": 0.10334821790456772,
+        "contrast_feature_value_variation": 0.7443490125762766,
+        "activation_frequency_delta": 0.13857142254710197,
+        "feature_mean_delta": 1.0982143059372902,
+        "feature_value_variation_delta": 2.2097636520338457
+      }
+    ]
+  }
+}

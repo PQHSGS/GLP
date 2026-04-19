@@ -28,7 +28,7 @@
     "tracedict_config": {
       "layer_prefix": "model.layers",
       "layers": [
-        12
+        14
       ],
       "retain": "output"
     }

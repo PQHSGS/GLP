@@ -186,6 +186,29 @@ python3 cli/post_process_steer.py \
   --vector-path /path/to/vector_folder
 ```
 
+### 5) Classifier Guidance (Concept-Conditioned GLP)
+
+Classifier guidance adds a concept-gradient term during each reverse denoising step.
+
+Training objective (binary concept classifier):
+- Build contrastive clean activations: concept-present `h+` and concept-absent `h-`
+- Sample timestep `t ~ U(0, 1)` and noise `eps`
+- Form noisy input `z_t = (1 - t) * h + t * eps`
+- Train classifier `p_phi(y | z_t, t)` with labels `y in {0, 1}`
+
+Guided reverse update (discrete form):
+
+`z_{t-1} = z_t + Delta_t * u_theta(z_t, t) + s * grad_z log p_phi(y_target | z_t, t)`
+
+Where:
+- `u_theta`: GLP denoiser vector field (manifold prior)
+- `grad_z log p_phi`: classifier guidance direction toward the target concept label
+- `s`: guidance scale
+
+Notes:
+- The classifier itself is implemented in `glp/classifer.py`.
+- In this workspace, end-to-end post-process classifier training + guided sampling is integrated in SAESteeringBench under `Benchmark/Steering/post_process/`.
+
 ### Output dataset format
 `collect_acts.py` writes the same format used by `glp_train.py`:
 - `data_0000.npy`, `data_0001.npy`, ...

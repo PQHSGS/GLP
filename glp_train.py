@@ -192,7 +192,7 @@ def main(device: Optional[str] = None):
     config_path = config_cli.pop("config", None)
     config_file = OmegaConf.load(config_path) if config_path else OmegaConf.create()
     config = OmegaConf.merge(config_base, config_file, config_cli)
-    resolved_device = resolve_device(config.get("device", device))
+    resolved_device = config.get("device", device)
     autocast_device_type = "cuda" if str(resolved_device).startswith("cuda") else "cpu"
     use_autocast = bool(config.use_bf16 and autocast_device_type == "cuda")
 

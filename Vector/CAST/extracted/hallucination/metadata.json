@@ -1,0 +1,21 @@
+{
+  "method": "CAST_HF",
+  "layer": [
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+  ],
+  "conditional_layer": 7,
+  "conditional_vector": null,
+  "has_conditional_vector": false,
+  "n_target": 1000,
+  "n_contrast": 1000
+}

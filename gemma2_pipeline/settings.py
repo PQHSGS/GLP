@@ -23,7 +23,7 @@ class ActivationCollectionConfig:
 
     model_name: str = "google/gemma-2-2b-it"
     output_dir: str = "data/gemma2-2b-layer14-fineweb-1M"
-    layer: int = 12
+    layer: int = 14
     max_length: int = 2048
     token_idx: Literal["last", "all"] = "all"
     drop_bos: bool = True

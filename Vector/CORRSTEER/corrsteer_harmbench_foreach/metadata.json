@@ -1,0 +1,420 @@
+{
+  "method": "CORRSTEER",
+  "layer": [
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "layer_mode": "foreach",
+  "n_samples": {
+    "13": 1000,
+    "14": 1000,
+    "15": 1000,
+    "16": 1000,
+    "17": 1000
+  },
+  "top_k": 15,
+  "pool": "max",
+  "steer_pool": "max",
+  "hook_point": [
+    "pre"
+  ],
+  "mask": "generation",
+  "pos_only": true,
+  "neg_only": false,
+  "decode": false,
+  "raw": false,
+  "reverse": false,
+  "selection": "correlation",
+  "caacoeff": false,
+  "max_new_tokens": 50,
+  "selected_features": {
+    "13": [
+      {
+        "feature_index": 9563,
+        "correlation": 0.40540969371795654,
+        "coefficient": 3.3327205181121826
+      },
+      {
+        "feature_index": 1088,
+        "correlation": 0.30178529024124146,
+        "coefficient": 2.1360294818878174
+      },
+      {
+        "feature_index": 3238,
+        "correlation": 0.28555265069007874,
+        "coefficient": 1.4439338445663452
+      },
+      {
+        "feature_index": 14375,
+        "correlation": 0.2844974994659424,
+        "coefficient": 3.168198585510254
+      },
+      {
+        "feature_index": 6529,
+        "correlation": 0.27102285623550415,
+        "coefficient": 3.011948585510254
+      },
+      {
+        "feature_index": 12701,
+        "correlation": 0.2624722421169281,
+        "coefficient": 4.155331134796143
+      },
+      {
+        "feature_index": 11202,
+        "correlation": 0.24316298961639404,
+        "coefficient": 9.138787269592285
+      },
+      {
+        "feature_index": 13396,
+        "correlation": 0.24035979807376862,
+        "coefficient": 3.796875
+      },
+      {
+        "feature_index": 5591,
+        "correlation": 0.23806436359882355,
+        "coefficient": 4.273897171020508
+      },
+      {
+        "feature_index": 15458,
+        "correlation": 0.23481780290603638,
+        "coefficient": 2.635110378265381
+      },
+      {
+        "feature_index": 11369,
+        "correlation": 0.23104415833950043,
+        "coefficient": 1.8033088445663452
+      },
+      {
+        "feature_index": 10517,
+        "correlation": 0.2283451110124588,
+        "coefficient": 4.924632549285889
+      },
+      {
+        "feature_index": 9840,
+        "correlation": 0.22607553005218506,
+        "coefficient": 1.1534926891326904
+      },
+      {
+        "feature_index": 839,
+        "correlation": 0.22300617396831512,
+        "coefficient": 6.875919342041016
+      },
+      {
+        "feature_index": 12306,
+        "correlation": 0.2204178273677826,
+        "coefficient": 1.1011029481887817
+      }
+    ],
+    "14": [
+      {
+        "feature_index": 9563,
+        "correlation": 0.40540969371795654,
+        "coefficient": 3.3327205181121826
+      },
+      {
+        "feature_index": 1088,
+        "correlation": 0.30178529024124146,
+        "coefficient": 2.1360294818878174
+      },
+      {
+        "feature_index": 3238,
+        "correlation": 0.28555265069007874,
+        "coefficient": 1.4439338445663452
+      },
+      {
+        "feature_index": 14375,
+        "correlation": 0.2844974994659424,
+        "coefficient": 3.168198585510254
+      },
+      {
+        "feature_index": 6529,
+        "correlation": 0.27102285623550415,
+        "coefficient": 3.011948585510254
+      },
+      {
+        "feature_index": 12701,
+        "correlation": 0.2624722421169281,
+        "coefficient": 4.155331134796143
+      },
+      {
+        "feature_index": 11202,
+        "correlation": 0.24316298961639404,
+        "coefficient": 9.138787269592285
+      },
+      {
+        "feature_index": 13396,
+        "correlation": 0.24035979807376862,
+        "coefficient": 3.796875
+      },
+      {
+        "feature_index": 5591,
+        "correlation": 0.23806436359882355,
+        "coefficient": 4.273897171020508
+      },
+      {
+        "feature_index": 15458,
+        "correlation": 0.23481780290603638,
+        "coefficient": 2.635110378265381
+      },
+      {
+        "feature_index": 11369,
+        "correlation": 0.23104415833950043,
+        "coefficient": 1.8033088445663452
+      },
+      {
+        "feature_index": 10517,
+        "correlation": 0.2283451110124588,
+        "coefficient": 4.924632549285889
+      },
+      {
+        "feature_index": 9840,
+        "correlation": 0.22607553005218506,
+        "coefficient": 1.1534926891326904
+      },
+      {
+        "feature_index": 839,
+        "correlation": 0.22300617396831512,
+        "coefficient": 6.875919342041016
+      },
+      {
+        "feature_index": 12306,
+        "correlation": 0.2204178273677826,
+        "coefficient": 1.1011029481887817
+      }
+    ],
+    "15": [
+      {
+        "feature_index": 9563,
+        "correlation": 0.40540969371795654,
+        "coefficient": 3.3327205181121826
+      },
+      {
+        "feature_index": 1088,
+        "correlation": 0.30178529024124146,
+        "coefficient": 2.1360294818878174
+      },
+      {
+        "feature_index": 3238,
+        "correlation": 0.28555265069007874,
+        "coefficient": 1.4439338445663452
+      },
+      {
+        "feature_index": 14375,
+        "correlation": 0.2844974994659424,
+        "coefficient": 3.168198585510254
+      },
+      {
+        "feature_index": 6529,
+        "correlation": 0.27102285623550415,
+        "coefficient": 3.011948585510254
+      },
+      {
+        "feature_index": 12701,
+        "correlation": 0.2624722421169281,
+        "coefficient": 4.155331134796143
+      },
+      {
+        "feature_index": 11202,
+        "correlation": 0.24316298961639404,
+        "coefficient": 9.138787269592285
+      },
+      {
+        "feature_index": 13396,
+        "correlation": 0.24035979807376862,
+        "coefficient": 3.796875
+      },
+      {
+        "feature_index": 5591,
+        "correlation": 0.23806436359882355,
+        "coefficient": 4.273897171020508
+      },
+      {
+        "feature_index": 15458,
+        "correlation": 0.23481780290603638,
+        "coefficient": 2.635110378265381
+      },
+      {
+        "feature_index": 11369,
+        "correlation": 0.23104415833950043,
+        "coefficient": 1.8033088445663452
+      },
+      {
+        "feature_index": 10517,
+        "correlation": 0.2283451110124588,
+        "coefficient": 4.924632549285889
+      },
+      {
+        "feature_index": 9840,
+        "correlation": 0.22607553005218506,
+        "coefficient": 1.1534926891326904
+      },
+      {
+        "feature_index": 839,
+        "correlation": 0.22300617396831512,
+        "coefficient": 6.875919342041016
+      },
+      {
+        "feature_index": 12306,
+        "correlation": 0.2204178273677826,
+        "coefficient": 1.1011029481887817
+      }
+    ],
+    "16": [
+      {
+        "feature_index": 9563,
+        "correlation": 0.40540969371795654,
+        "coefficient": 3.3327205181121826
+      },
+      {
+        "feature_index": 1088,
+        "correlation": 0.30178529024124146,
+        "coefficient": 2.1360294818878174
+      },
+      {
+        "feature_index": 3238,
+        "correlation": 0.28555265069007874,
+        "coefficient": 1.4439338445663452
+      },
+      {
+        "feature_index": 14375,
+        "correlation": 0.2844974994659424,
+        "coefficient": 3.168198585510254
+      },
+      {
+        "feature_index": 6529,
+        "correlation": 0.27102285623550415,
+        "coefficient": 3.011948585510254
+      },
+      {
+        "feature_index": 12701,
+        "correlation": 0.2624722421169281,
+        "coefficient": 4.155331134796143
+      },
+      {
+        "feature_index": 11202,
+        "correlation": 0.24316298961639404,
+        "coefficient": 9.138787269592285
+      },
+      {
+        "feature_index": 13396,
+        "correlation": 0.24035979807376862,
+        "coefficient": 3.796875
+      },
+      {
+        "feature_index": 5591,
+        "correlation": 0.23806436359882355,
+        "coefficient": 4.273897171020508
+      },
+      {
+        "feature_index": 15458,
+        "correlation": 0.23481780290603638,
+        "coefficient": 2.635110378265381
+      },
+      {
+        "feature_index": 11369,
+        "correlation": 0.23104415833950043,
+        "coefficient": 1.8033088445663452
+      },
+      {
+        "feature_index": 10517,
+        "correlation": 0.2283451110124588,
+        "coefficient": 4.924632549285889
+      },
+      {
+        "feature_index": 9840,
+        "correlation": 0.22607553005218506,
+        "coefficient": 1.1534926891326904
+      },
+      {
+        "feature_index": 839,
+        "correlation": 0.22300617396831512,
+        "coefficient": 6.875919342041016
+      },
+      {
+        "feature_index": 12306,
+        "correlation": 0.2204178273677826,
+        "coefficient": 1.1011029481887817
+      }
+    ],
+    "17": [
+      {
+        "feature_index": 9563,
+        "correlation": 0.40540969371795654,
+        "coefficient": 3.3327205181121826
+      },
+      {
+        "feature_index": 1088,
+        "correlation": 0.30178529024124146,
+        "coefficient": 2.1360294818878174
+      },
+      {
+        "feature_index": 3238,
+        "correlation": 0.28555265069007874,
+        "coefficient": 1.4439338445663452
+      },
+      {
+        "feature_index": 14375,
+        "correlation": 0.2844974994659424,
+        "coefficient": 3.168198585510254
+      },
+      {
+        "feature_index": 6529,
+        "correlation": 0.27102285623550415,
+        "coefficient": 3.011948585510254
+      },
+      {
+        "feature_index": 12701,
+        "correlation": 0.2624722421169281,
+        "coefficient": 4.155331134796143
+      },
+      {
+        "feature_index": 11202,
+        "correlation": 0.24316298961639404,
+        "coefficient": 9.138787269592285
+      },
+      {
+        "feature_index": 13396,
+        "correlation": 0.24035979807376862,
+        "coefficient": 3.796875
+      },
+      {
+        "feature_index": 5591,
+        "correlation": 0.23806436359882355,
+        "coefficient": 4.273897171020508
+      },
+      {
+        "feature_index": 15458,
+        "correlation": 0.23481780290603638,
+        "coefficient": 2.635110378265381
+      },
+      {
+        "feature_index": 11369,
+        "correlation": 0.23104415833950043,
+        "coefficient": 1.8033088445663452
+      },
+      {
+        "feature_index": 10517,
+        "correlation": 0.2283451110124588,
+        "coefficient": 4.924632549285889
+      },
+      {
+        "feature_index": 9840,
+        "correlation": 0.22607553005218506,
+        "coefficient": 1.1534926891326904
+      },
+      {
+        "feature_index": 839,
+        "correlation": 0.22300617396831512,
+        "coefficient": 6.875919342041016
+      },
+      {
+        "feature_index": 12306,
+        "correlation": 0.2204178273677826,
+        "coefficient": 1.1011029481887817
+      }
+    ]
+  }
+}

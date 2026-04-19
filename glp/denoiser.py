@@ -1,6 +1,7 @@
 import einops
 from einops import repeat
 from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 from itertools import chain
 import math
 from omegaconf import OmegaConf
@@ -300,7 +301,7 @@ class GLP(nn.Module):
             loss=loss,
         )
 
-def load_glp(weights_folder, device="cuda:0", checkpoint="final"):
+def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):
     """
     Load GLP from either:
     - local folder path
@@ -309,17 +310,39 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final"):
     The checkpoint can be:
     - "final" (loads final.safetensors)
     - a milestone folder name under the root (e.g. "100M")
+
+    local_files_only behavior:
+    - True: only use local HF cache; fail if missing
+    - False: allow network download
+    - None (default): try local cache first, then fall back to network
     """
     resolved_folder = Path(weights_folder).expanduser()
 
     # If a local folder is provided, use it directly.
     # Otherwise treat input as a Hub repo id and download it.
     if not resolved_folder.exists():
-        ignore_patterns = ["checkpoints/*"] if checkpoint == "final" else None
-        local_dir = snapshot_download(
-            repo_id=weights_folder,
-            ignore_patterns=ignore_patterns,
-        )
+        if checkpoint == "final":
+            allow_patterns = ["config.yaml", "rep_statistics.pt", "final.safetensors"]
+        else:
+            allow_patterns = [
+                "config.yaml",
+                "rep_statistics.pt",
+                f"{checkpoint}.safetensors",
+                f"{checkpoint}/config.yaml",
+                f"{checkpoint}/rep_statistics.pt",
+                f"{checkpoint}/final.safetensors",
+            ]
+
+        download_kwargs = {
+            "repo_id": weights_folder,
+            "allow_patterns": allow_patterns,
+        }
+
+        if local_files_only is True:
+            local_dir = snapshot_download(local_files_only=True, **download_kwargs)
+        elif local_files_only is False:
+            local_dir = snapshot_download(local_files_only=False, **download_kwargs)
+
         resolved_folder = Path(local_dir)
 
     # Allow loading a milestone subfolder when checkpoint names a directory.
@@ -330,18 +353,17 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final"):
         checkpoint = "final"
 
     config = OmegaConf.load(str(resolved_folder / "config.yaml"))
-    config.rep_statistic = str(resolved_folder / "rep_statistics.pt")
-    # rep_stats_path = str(resolved_folder / "rep_statistics.pt")
+    rep_stats_path = str(resolved_folder / "rep_statistics.pt")
 
-    # # Streaming checkpoints store this path under glp_kwargs.normalizer_config.
-    # # Rewrite it to an absolute local path when loading from Hub snapshots.
-    # if "glp_kwargs" in config and "normalizer_config" in config.glp_kwargs:
-    #     config.glp_kwargs.normalizer_config.rep_statistic = rep_stats_path
-    # # Fallback for older/alternate config shapes.
-    # elif "rep_statistic" in config:
-    #     config.rep_statistic = rep_stats_path
+    # Streaming checkpoints store this path under glp_kwargs.normalizer_config.
+    # Rewrite it to an absolute local path when loading from Hub snapshots.
+    if "glp_kwargs" in config and "normalizer_config" in config.glp_kwargs:
+        config.glp_kwargs.normalizer_config.rep_statistic = rep_stats_path
+    # Fallback for older/alternate config shapes.
+    elif "rep_statistic" in config:
+        config.rep_statistic = rep_stats_path
     OmegaConf.resolve(config)
     model = GLP(**config.glp_kwargs)
-    model.to(device)
     model.load_pretrained(resolved_folder, name=checkpoint)
+    model.to(device)
     return model
