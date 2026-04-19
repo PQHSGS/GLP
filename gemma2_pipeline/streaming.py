@@ -92,8 +92,10 @@ def stream_train(args):
         max_documents=args.max_documents,
         streaming=True
     )
-    text_iter = iter_fineweb_texts(fineweb)
-    batch_iterator = batch_items(text_iter, 16)
+
+    def build_batch_iterator():
+        text_iter = iter_fineweb_texts(fineweb)
+        return batch_items(text_iter, 16)
     
     global_step = 0
     pbar = tqdm(total=total_steps, desc="Streaming GLP")
@@ -135,10 +137,73 @@ def stream_train(args):
     tracedict_config = {
         "layer_prefix": "model.layers",
         "layers": [args.layer],
-        "retain": "output",
+        "retain": "input",
     }
     
     use_autocast = ("cuda" in str(device))
+    stats_target_vectors = int(args.total_steps * args.batch_size)
+    if stats_target_vectors <= 0:
+        raise ValueError(f"Expected total_steps * batch_size > 0, got {stats_target_vectors}")
+
+    LOGGER.info(
+        "Precomputing fixed normalization stats over up to %d vectors before optimization.",
+        stats_target_vectors,
+    )
+    stats_batch_iterator = build_batch_iterator()
+    stats_pbar = tqdm(total=stats_target_vectors, desc="Precompute stats", unit="vec")
+    stats_vectors_seen = 0
+
+    while stats_vectors_seen < stats_target_vectors:
+        text_batch = next(stats_batch_iterator, None)
+        if not text_batch:
+            LOGGER.warning(
+                "Dataset exhausted during stats precompute at %d/%d vectors.",
+                stats_vectors_seen,
+                stats_target_vectors,
+            )
+            break
+
+        activations = save_acts(
+            hf_model=hf_model,
+            hf_tokenizer=hf_tokenizer,
+            text=text_batch,
+            tracedict_config=tracedict_config,
+            padding_side="right",
+            token_idx="all",
+            batch_size=1,
+            max_length=args.max_length,
+        )
+        vectors = flatten_layer_activations(activations, drop_bos=True)
+        if vectors.numel() == 0:
+            continue
+
+        remaining = stats_target_vectors - stats_vectors_seen
+        vectors = vectors[:remaining]
+        storage_vectors = to_storage_array(vectors, "float32")
+        stats.update(storage_vectors)
+
+        seen = int(storage_vectors.shape[0])
+        stats_vectors_seen += seen
+        stats_pbar.update(seen)
+
+    stats_pbar.close()
+
+    if stats.count == 0:
+        raise RuntimeError("No activations were observed while precomputing normalization stats.")
+
+    mean, var = stats.finalize()
+    # Llama-style alignment: rep_statistics stores one scalar per hidden dimension.
+    # This is a mean vector and variance vector over all observed samples, not per-sample stats.
+    if mean.ndim != 1 or var.ndim != 1 or mean.shape[0] != hidden_size or var.shape[0] != hidden_size:
+        raise RuntimeError(
+            f"Expected 1D mean/var vectors of length {hidden_size}, got mean={mean.shape}, var={var.shape}"
+        )
+    glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
+    glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
+    LOGGER.info("Frozen normalizer stats from %d vectors.", stats.count)
+
+    # Start a fresh data iterator for the actual training pass.
+    batch_iterator = build_batch_iterator()
     
     while global_step < total_steps:
         if tmp_dir.exists():
@@ -174,7 +239,6 @@ def stream_train(args):
             vectors = vectors[:remaining]
             
             storage_vectors = to_storage_array(vectors, "float32")
-            stats.update(storage_vectors)
             
             for row in storage_vectors:
                 writer.write(np.ascontiguousarray(row))
@@ -186,12 +250,6 @@ def stream_train(args):
             LOGGER.warning("No vectors generated in this chunk (dataset exhausted?). Halting training loop early.")
             break
         
-        
-        # Inject dynamic stats
-        if stats.count > 0:
-            mean, var = stats.finalize()
-            glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
-            glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
         
         train_dataset = load_activation_dataset(str(tmp_dir))
         train_dataloader = get_activation_dataloader(
