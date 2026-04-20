@@ -19,7 +19,7 @@ from .loading import (
     load_model_and_tokenizer,
     to_storage_array,
 )
-from .preprocess import batch_items, flatten_layer_activations
+from .preprocess import batch_items, flatten_layer_activations, sample_random_token_per_document
 from .stats import RunningMoments, save_rep_statistics
 from .settings import FineWebSourceConfig
 
@@ -41,7 +41,7 @@ def setup_glp_model(hidden_size, args):
         tracedict_config={
             "layer_prefix": "model.layers",
             "layers": [args.layer],
-            "retain": "output",
+            "retain": args.retain,
         }
     )
     return model
@@ -69,10 +69,10 @@ def stream_train(args):
         optimizer,
         lr_lambda=partial(
             cosine_scheduler_with_warmup,
-            warmup_steps=int(0.01 * total_steps),
+            warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_steps),
             max_steps=total_steps,
-            initial_factor=0.01,
-            final_factor=0.1,
+            initial_factor=getattr(args, "initial_factor", 0.01),
+            final_factor=getattr(args, "final_factor", 0.1),
         )
     )
 
@@ -95,7 +95,9 @@ def stream_train(args):
 
     def build_batch_iterator():
         text_iter = iter_fineweb_texts(fineweb)
-        return batch_items(text_iter, 16)
+        return batch_items(text_iter, args.document_batch_size)
+
+    rng = np.random.default_rng(getattr(args, "sample_seed", 0))
     
     global_step = 0
     pbar = tqdm(total=total_steps, desc="Streaming GLP")
@@ -127,7 +129,7 @@ def stream_train(args):
                 "tracedict_config": {
                     "layer_prefix": "model.layers",
                     "layers": [args.layer],
-                    "retain": "output",
+                    "retain": args.retain,
                 }
             }
         }
@@ -137,13 +139,47 @@ def stream_train(args):
     tracedict_config = {
         "layer_prefix": "model.layers",
         "layers": [args.layer],
-        "retain": "input",
+        "retain": args.retain,
     }
+
+    def extract_vectors(text_batch: list[str]) -> torch.Tensor:
+        save_token_idx = "all" if args.token_idx == "random_doc" else args.token_idx
+        activations = save_acts(
+            hf_model=hf_model,
+            hf_tokenizer=hf_tokenizer,
+            text=text_batch,
+            tracedict_config=tracedict_config,
+            padding_side=args.padding_side,
+            token_idx=save_token_idx,
+            batch_size=args.forward_batch_size,
+            max_length=args.max_length,
+        )
+        if args.token_idx == "random_doc":
+            tokenized = hf_tokenizer(
+                text_batch,
+                return_tensors="pt",
+                padding="longest",
+                truncation=True,
+                max_length=args.max_length,
+            )
+            vectors = sample_random_token_per_document(
+                activations,
+                tokenized["attention_mask"],
+                drop_bos=args.drop_bos,
+                rng=rng,
+            )
+        else:
+            vectors = flatten_layer_activations(activations, drop_bos=args.drop_bos)
+        return vectors
     
-    use_autocast = ("cuda" in str(device))
-    stats_target_vectors = int(args.total_steps * args.batch_size)
+    use_autocast = bool(getattr(args, "use_bf16", True) and ("cuda" in str(device)))
+    stats_target_vectors = getattr(args, "stats_max_vectors", None)
+    if stats_target_vectors is None:
+        stats_target_vectors = int(args.total_steps * args.batch_size)
+    else:
+        stats_target_vectors = int(stats_target_vectors)
     if stats_target_vectors <= 0:
-        raise ValueError(f"Expected total_steps * batch_size > 0, got {stats_target_vectors}")
+        raise ValueError(f"Expected positive stats target vectors, got {stats_target_vectors}")
 
     LOGGER.info(
         "Precomputing fixed normalization stats over up to %d vectors before optimization.",
@@ -163,26 +199,16 @@ def stream_train(args):
             )
             break
 
-        activations = save_acts(
-            hf_model=hf_model,
-            hf_tokenizer=hf_tokenizer,
-            text=text_batch,
-            tracedict_config=tracedict_config,
-            padding_side="right",
-            token_idx="all",
-            batch_size=1,
-            max_length=args.max_length,
-        )
-        vectors = flatten_layer_activations(activations, drop_bos=True)
+        vectors = extract_vectors(text_batch)
         if vectors.numel() == 0:
             continue
 
         remaining = stats_target_vectors - stats_vectors_seen
         vectors = vectors[:remaining]
-        storage_vectors = to_storage_array(vectors, "float32")
-        stats.update(storage_vectors)
+        stats_vectors = vectors.detach().float().cpu().numpy()
+        stats.update(stats_vectors)
 
-        seen = int(storage_vectors.shape[0])
+        seen = int(stats_vectors.shape[0])
         stats_vectors_seen += seen
         stats_pbar.update(seen)
 
@@ -210,8 +236,9 @@ def stream_train(args):
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(parents=True, exist_ok=True)
         
+        stream_storage_dtype = getattr(args, "storage_dtype", "bfloat16")
         file_size = args.stream_chunk_size * hidden_size
-        np_dtype, dtype_label = get_storage_dtype("float32")
+        np_dtype, dtype_label = get_storage_dtype(stream_storage_dtype)
         writer = MemmapWriter(output_dir=tmp_dir, file_size=file_size, dtype=np_dtype)
         (tmp_dir / "dtype.txt").write_text(dtype_label)
         
@@ -222,23 +249,13 @@ def stream_train(args):
                 LOGGER.warning("Ran out of text batch data.")
                 break
             
-            activations = save_acts(
-                hf_model=hf_model,
-                hf_tokenizer=hf_tokenizer,
-                text=text_batch,
-                tracedict_config=tracedict_config,
-                padding_side="right",
-                token_idx="all",
-                batch_size=1,
-                max_length=args.max_length,
-            )
-            vectors = flatten_layer_activations(activations, drop_bos=True)
+            vectors = extract_vectors(text_batch)
             if vectors.numel() == 0: continue
             
             remaining = args.stream_chunk_size - vectors_written
             vectors = vectors[:remaining]
             
-            storage_vectors = to_storage_array(vectors, "float32")
+            storage_vectors = to_storage_array(vectors, stream_storage_dtype)
             
             for row in storage_vectors:
                 writer.write(np.ascontiguousarray(row))
@@ -256,7 +273,7 @@ def stream_train(args):
             dataset=train_dataset,
             batch_size=args.batch_size,
             normalizer=glp_model.normalizer,
-            shuffle=True,
+            shuffle=getattr(args, "shuffle", True),
         )
         
         glp_model.train()
@@ -269,7 +286,10 @@ def stream_train(args):
                 loss = outputs.loss
                 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(glp_model.parameters(), 1.0)
+            grad_clip_threshold = float(getattr(args, "gradient_clipping_threshold", 1.0))
+            max_grad_norm = grad_clip_threshold if grad_clip_threshold > 0.0 else float("inf")
+            grad_norm = torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
+            grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
             optimizer.step()
             optimizer.zero_grad()
             scheduler.step()
@@ -278,8 +298,17 @@ def stream_train(args):
             pbar.update(1)
             pbar.set_description(f"Streaming step {global_step}/{total_steps} (loss: {loss.item():.4f})")
             
-            if wandb_run and global_step % 10 == 0:
-                wandb_run.log({"train/step": global_step, "train/loss": loss.item(), "train/learning_rate": scheduler.get_last_lr()[0]}, step=global_step)
+            log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 10)))
+            if wandb_run and global_step % log_every_n_steps == 0:
+                wandb_run.log(
+                    {
+                        "train/step": global_step,
+                        "train/loss": loss.item(),
+                        "train/learning_rate": scheduler.get_last_lr()[0],
+                        "train/grad_norm": grad_norm_value,
+                    },
+                    step=global_step,
+                )
 
         total_tokens_collected += vectors_written
         if total_tokens_collected >= next_checkpoint_target:

@@ -22,27 +22,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Collect LLM activations into GLP memmap dataset format"
     )
-    parser.add_argument("--model-name", default="google/gemma-2-2b-it")
-    parser.add_argument("--layer", type=int, default=14)
-    parser.add_argument("--output-dir", default="data/gemma2-2b-layer14-fineweb-1M")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--torch-dtype", choices=["float16", "bfloat16", "float32"], default="float32")
+    parser.add_argument("--model-name", default="meta-llama/Llama-3.2-1B")
+    parser.add_argument("--layer", type=int, default=7)
+    parser.add_argument("--output-dir", default="data/llama1b-layer07-fineweb-localcollect-1M-all")
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--torch-dtype", choices=["float16", "bfloat16", "float32"], default="bfloat16")
 
     parser.add_argument("--dataset-name", default="HuggingFaceFW/fineweb")
     parser.add_argument("--dataset-config", default="sample-10BT")
     parser.add_argument("--split", default="train")
     parser.add_argument("--text-field", default="text")
-    parser.add_argument("--max-documents", type=int, default=1000)
+    parser.add_argument("--max-documents", type=int, default=50000)
 
-    parser.add_argument("--max-length", type=int, default=1024)
-    parser.add_argument("--token-idx", choices=["last", "all"], default="all")
+    parser.add_argument("--max-length", type=int, default=2048)
+    parser.add_argument("--token-idx", choices=["last", "all", "random_doc"], default="all")
+    parser.add_argument("--sample-seed", type=int, default=0)
     parser.add_argument("--drop-bos", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--padding-side", choices=["left", "right"], default="right")
     parser.add_argument("--document-batch-size", type=int, default=16)
     parser.add_argument("--forward-batch-size", type=int, default=1)
     parser.add_argument("--vectors-per-file", type=int, default=50000)
     parser.add_argument("--max-vectors", type=int, default=1000000)
-    parser.add_argument("--storage-dtype", choices=["float32", "float16", "bfloat16"], default="float32")
+    parser.add_argument("--storage-dtype", choices=["float32", "float16", "bfloat16"], default="bfloat16")
     return parser
 
 
@@ -63,6 +64,7 @@ def run(args: argparse.Namespace) -> None:
         layer=args.layer,
         max_length=args.max_length,
         token_idx=args.token_idx,
+        sample_seed=args.sample_seed,
         drop_bos=args.drop_bos,
         padding_side=args.padding_side,
         document_batch_size=args.document_batch_size,

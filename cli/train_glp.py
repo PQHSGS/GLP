@@ -16,9 +16,9 @@ if __package__ in {None, ""}:
 
 import numpy as np
 
-from gemma2_pipeline.settings import GemmaTrainConfig
+from gemma2_pipeline.settings import ModelTrainConfig
 
-def build_train_config_dict(config: GemmaTrainConfig) -> dict:
+def build_train_config_dict(config: ModelTrainConfig) -> dict:
     run_name = config.run_name
     output_path = f"{config.save_root}/runs/{run_name}"
     rep_statistic = config.rep_statistic or f"{config.train_dataset}/rep_statistics.pt"
@@ -70,7 +70,7 @@ def build_train_config_dict(config: GemmaTrainConfig) -> dict:
     }
 
 def write_train_config(
-    config: GemmaTrainConfig,
+    config: ModelTrainConfig,
     config_out_path: str | None = None,
 ) -> Path:
     out_path = Path(config_out_path or config.config_out_path)
@@ -100,13 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Prepare GLP config from activation memmaps and run training"
     )
     parser.add_argument("--train-dataset", required=True, help="Path to memmap activation dataset folder")
-    parser.add_argument("--model-name", default="google/gemma-2-2b-it")
-    parser.add_argument("--layer", type=int, default=14)
+    parser.add_argument("--model-name", default="meta-llama/Llama-3.2-1B")
+    parser.add_argument("--layer", type=int, default=7)
     parser.add_argument("--device", default="auto")
 
-    parser.add_argument("--run-name", default="glp-custom-d3-static")
+    parser.add_argument("--run-name", default="glp-llama1b-d3_static-1B")
     parser.add_argument("--save-root", default=".")
-    parser.add_argument("--config-out", default="configs/train_custom_static.yaml")
+    parser.add_argument("--config-out", default="configs/train_llama1b_our.yaml")
 
     parser.add_argument("--denoiser-layers", type=int, default=3)
     parser.add_argument("--d-model-mult", type=int, default=2)
@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--learning-rate", type=float, default=5e-5)
-    parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=True)
 
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--wandb-project", default="glp")
@@ -135,7 +135,7 @@ def run(args: argparse.Namespace) -> None:
     d_model = args.d_model_mult * d_input
     d_mlp = args.d_mlp_mult * d_input
 
-    train_cfg = GemmaTrainConfig(
+    train_cfg = ModelTrainConfig(
         save_root=args.save_root,
         model_name=args.model_name,
         run_name=args.run_name,

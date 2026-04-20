@@ -285,10 +285,10 @@ def main(device: Optional[str] = None):
             if train_steps % config.gradient_accumulation_steps == 0:
                 num_gradient_steps += 1
 
-                if config.gradient_clipping_threshold > 0.0:
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), config.gradient_clipping_threshold
-                    )
+                clip_threshold = float(config.gradient_clipping_threshold)
+                max_grad_norm = clip_threshold if clip_threshold > 0.0 else float("inf")
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
 
                 optimizer.step()
                 optimizer.zero_grad()
@@ -310,6 +310,7 @@ def main(device: Optional[str] = None):
                                 "train/step": num_gradient_steps,
                                 "train/loss": avg_loss,
                                 "train/learning_rate": scheduler.get_last_lr()[0],
+                                "train/grad_norm": grad_norm_value,
                             },
                             step=num_gradient_steps
                         )

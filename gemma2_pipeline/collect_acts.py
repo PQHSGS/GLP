@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import torch
 from tqdm import tqdm
 
 from glp.utils_acts import MemmapWriter, save_acts
@@ -13,7 +14,7 @@ from .loading import (
     load_model_and_tokenizer,
     to_storage_array,
 )
-from .preprocess import batch_items, flatten_layer_activations
+from .preprocess import batch_items, flatten_layer_activations, sample_random_token_per_document
 from .settings import ActivationCollectionConfig
 from .stats import RunningMoments, save_rep_statistics
 
@@ -51,6 +52,7 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
 
     documents_processed = 0
     vectors_written = 0
+    rng = np.random.default_rng(config.sample_seed)
 
     text_iter = iter_fineweb_texts(config.fineweb)
     for text_batch in tqdm(
@@ -60,18 +62,36 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
     ):
         documents_processed += len(text_batch)
 
+        save_token_idx = "all" if config.token_idx == "random_doc" else config.token_idx
+
         activations = save_acts(
             hf_model=hf_model,
             hf_tokenizer=hf_tokenizer,
             text=text_batch,
             tracedict_config=tracedict_config,
             padding_side=config.padding_side,
-            token_idx=config.token_idx,
+            token_idx=save_token_idx,
             batch_size=config.forward_batch_size,
             max_length=config.max_length,
         )
 
-        vectors = flatten_layer_activations(activations, drop_bos=config.drop_bos)
+        if config.token_idx == "random_doc":
+            tokenized = hf_tokenizer(
+                text_batch,
+                return_tensors="pt",
+                padding="longest",
+                truncation=True,
+                max_length=config.max_length,
+            )
+            attention_mask = tokenized["attention_mask"]
+            vectors = sample_random_token_per_document(
+                activations,
+                attention_mask,
+                drop_bos=config.drop_bos,
+                rng=rng,
+            )
+        else:
+            vectors = flatten_layer_activations(activations, drop_bos=config.drop_bos)
         if vectors.numel() == 0:
             continue
 
@@ -84,7 +104,7 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
         if vectors.shape[0] == 0:
             break
 
-        stats.update(vectors.detach().cpu().numpy())
+        stats.update(vectors.detach().float().cpu().numpy())
         storage_vectors = to_storage_array(vectors, config.storage_dtype)
         for row in storage_vectors:
             writer.write(np.ascontiguousarray(row))

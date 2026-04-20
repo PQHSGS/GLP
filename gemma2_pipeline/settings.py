@@ -11,7 +11,7 @@ class FineWebSourceConfig:
     split: str = "train"
     text_field: str = "text"
     streaming: bool = True
-    max_documents: Optional[int] = None
+    max_documents: Optional[int] = 50000
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -21,20 +21,21 @@ class FineWebSourceConfig:
 class ActivationCollectionConfig:
     """Configuration for collecting Gemma activations into memmaps."""
 
-    model_name: str = "google/gemma-2-2b-it"
-    output_dir: str = "data/gemma2-2b-layer14-fineweb-1M"
-    layer: int = 14
+    model_name: str = "meta-llama/Llama-3.2-1B"
+    output_dir: str = "data/llama1b-layer07-fineweb-localcollect-1M-all"
+    layer: int = 7
     max_length: int = 2048
-    token_idx: Literal["last", "all"] = "all"
+    token_idx: Literal["last", "all", "random_doc"] = "all"
+    sample_seed: int = 0
     drop_bos: bool = True
     padding_side: Literal["left", "right"] = "right"
-    document_batch_size: int = 128
-    forward_batch_size: int = 8
+    document_batch_size: int = 16
+    forward_batch_size: int = 1
     vectors_per_file: int = 50000
     max_vectors: Optional[int] = 1000000
-    storage_dtype: Literal["float32", "float16", "bfloat16"] = "float32"
-    device: str = "auto"
-    torch_dtype: Literal["float16", "bfloat16", "float32"] = "float32"
+    storage_dtype: Literal["float32", "float16", "bfloat16"] = "bfloat16"
+    device: str = "cuda:0"
+    torch_dtype: Literal["float16", "bfloat16", "float32"] = "bfloat16"
     fineweb: FineWebSourceConfig = field(default_factory=FineWebSourceConfig)
 
     def to_dict(self) -> dict:
@@ -44,26 +45,26 @@ class ActivationCollectionConfig:
 
 
 @dataclass
-class GemmaTrainConfig:
+class ModelTrainConfig:
     """Configuration for writing and launching GLP training."""
 
     save_root: str = "."
-    model_name: str = "google/gemma-2-2b-it"
-    run_name: str = "glp-gemma2-2b-d3_static-1M"
-    train_dataset: str = "./data/gemma2-2b-layer14-fineweb-1M"
+    model_name: str = "meta-llama/Llama-3.2-1B"
+    run_name: str = "glp-llama1b-d3_static-1B"
+    train_dataset: str = "./data/llama1b-layer07-fineweb-localcollect-1M-all"
     rep_statistic: Optional[str] = None
     num_epochs: int = 1
     save_epochs: list[int] = field(default_factory=lambda: [1])
     shuffle: bool = True
-    d_input: int = 2304
-    d_model: int = 4608
-    d_mlp: int = 9216
+    d_input: int = 2048
+    d_model: int = 4096
+    d_mlp: int = 8192
     denoiser_layers: int = 3
     multi_layer_n_layers: Optional[int] = None
-    layer: int = 14
+    layer: int = 7
     retain: str = "output"
     device: str = "auto"
-    use_bf16: bool = False
+    use_bf16: bool = True
     learning_rate: float = 5e-5
     batch_size: int = 4096
     gradient_accumulation_steps: int = 1
@@ -75,7 +76,7 @@ class GemmaTrainConfig:
     final_factor: float = 0.1
     wandb_enabled: bool = True
     wandb_project: str = "glp"
-    config_out_path: str = "configs/train_gemma2_2b_static.yaml"
+    config_out_path: str = "configs/train_llama1b_our.yaml"
 
     def to_dict(self) -> dict:
         return asdict(self)
