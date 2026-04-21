@@ -56,7 +56,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--max-documents", type=int, default=source_defaults.max_documents, help="Stop streaming texts after reading this many documents")
     
     # Stream/Train args
-    parser.add_argument("--stream-chunk-size", type=int, default=65536, help="Number of activations per chunk")
+    parser.add_argument("--stream-chunk-size", type=int, default=1000000, help="Number of activations per chunk")
     parser.add_argument("--total-steps", type=int, default=244, help="Total number of optimizer steps")
     parser.add_argument("--batch-size", type=int, default=train_defaults.batch_size)
     parser.add_argument("--learning-rate", type=float, default=train_defaults.learning_rate)
