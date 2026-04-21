@@ -342,10 +342,34 @@ class GLP(nn.Module):
         )
         # compute loss
         loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs)
+        
+        # ===== proper metrics =====
+
+        pred = outputs.view(-1, outputs.shape[-1])
+        tgt  = target.view(-1, target.shape[-1])
+
+        # relative squared error  
+        tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
+        loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
+        loss_rel = loss_rel.mean()
+
+        # map back to raw space
+        pred_raw = self.normalizer.denormalize(pred, layer_idx)
+        tgt_raw  = self.normalizer.denormalize(tgt, layer_idx)
+
+        # raw-space MSE (THIS is comparable across normalization)
+        loss_raw = torch.nn.functional.mse_loss(pred_raw, tgt_raw)
+
+        # cosine similarity (KEEP)
+        cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
+
         return SimpleNamespace(
             latents=outputs,
             timesteps=timesteps,
             loss=loss,
+            loss_rel=loss_rel,
+            loss_raw=loss_raw,
+            cos_sim=cos_sim,
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):

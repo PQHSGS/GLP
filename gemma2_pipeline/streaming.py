@@ -265,6 +265,9 @@ def stream_train(args):
             with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
                 outputs = glp_model(**batch)
                 loss = outputs.loss
+                loss_rel = outputs.loss_rel
+                loss_raw = outputs.loss_raw
+                cos_sim = outputs.cos_sim
                 
             loss.backward()
             grad_clip_threshold = float(getattr(args, "gradient_clipping_threshold", 1.0))
@@ -283,8 +286,10 @@ def stream_train(args):
             if wandb_run and global_step % log_every_n_steps == 0:
                 wandb_run.log(
                     {
-                        "train/step": global_step,
                         "train/loss": loss.item(),
+                        "train/loss_rel": loss_rel.item(),
+                        "train/loss_raw": loss_raw.item(),
+                        "train/cos_sim": cos_sim.item(),
                         "train/learning_rate": scheduler.get_last_lr()[0],
                         "train/grad_norm": grad_norm_value,
                     },
