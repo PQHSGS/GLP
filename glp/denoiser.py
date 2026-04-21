@@ -17,14 +17,29 @@ try:
 except ImportError:
     from glp import flow_matching
 
+
+def _canonicalize_normalization_method(method):
+    if method is None:
+        return "gaussian"
+    method = str(method).strip().lower().replace("-", "_")
+    if method == "lognorm":
+        method = "log_norm"
+    if method not in {"gaussian", "log_norm"}:
+        raise ValueError(
+            f"Unsupported normalization_method '{method}'. "
+            "Expected one of ['gaussian', 'log_norm']."
+        )
+    return method
+
 # ==========================
 #     Normalizer Class
 # ==========================
 class Normalizer(nn.Module):
-    def __init__(self, mean, var):
+    def __init__(self, mean, var, normalization_method="gaussian"):
         super().__init__()
         self.mean = nn.Buffer(mean)
         self.var = nn.Buffer(var)
+        self.normalization_method = _canonicalize_normalization_method(normalization_method)
     
     def get_layer_stat(self, stat, layer_idx=None):
         if stat.ndim > 1 and stat.shape[0] != 1:
@@ -40,16 +55,31 @@ class Normalizer(nn.Module):
             return stat
 
     def normalize(self, rep, layer_idx=None):
+        if self.normalization_method == "log_norm":
+            rep = rep.to(self.var.device)
+            return torch.sign(rep) * torch.log1p(torch.abs(rep))
+
         mean = self.get_layer_stat(self.mean, layer_idx)
         var = self.get_layer_stat(self.var, layer_idx)
+        var = torch.clamp(var, min=1e-8)
         return (rep.to(mean.device) - mean) / torch.sqrt(var)
     
     def denormalize(self, rep, layer_idx=None):
+        if self.normalization_method == "log_norm":
+            rep = rep.to(self.var.device)
+            return torch.sign(rep) * torch.expm1(torch.abs(rep))
+
         mean = self.get_layer_stat(self.mean, layer_idx)
         var = self.get_layer_stat(self.var, layer_idx)
+        var = torch.clamp(var, min=1e-8)
         return rep.to(var.device) * torch.sqrt(var) + mean
     
     def check_normalized(self, rep, atol=2.0):
+        if self.normalization_method != "gaussian":
+            if not torch.isfinite(rep).all():
+                print("WARNING: Latents contain non-finite values after normalization.")
+            return
+
         # the tolerance is lenient to catch egregious cases
         rep_mean = rep.view(-1, rep.shape[-1]).mean(dim=0)
         rep_var = rep.view(-1, rep.shape[-1]).var(dim=0, unbiased=False)
@@ -64,20 +94,37 @@ class Normalizer(nn.Module):
             )
 
     @classmethod
-    def from_config(cls, rep_statistic="", d_input=None):
+    def from_config(cls, rep_statistic="", d_input=None, normalization_method="gaussian"):
+        normalization_method = _canonicalize_normalization_method(normalization_method)
         if rep_statistic:
             rep_statistic_pt = torch.load(rep_statistic, map_location="cpu")
             rep_mean = rep_statistic_pt["mean"]
             rep_var = rep_statistic_pt["var"]
-            return cls(rep_mean, rep_var)
+            saved_method = rep_statistic_pt.get("normalization_method")
+            if saved_method is not None:
+                saved_method = _canonicalize_normalization_method(saved_method)
+                if normalization_method == "gaussian" and saved_method != normalization_method:
+                    normalization_method = saved_method
+            return cls(rep_mean, rep_var, normalization_method=normalization_method)
         
         
         dim = d_input if d_input is not None else 1
-        return cls(torch.zeros(dim), torch.ones(dim))
+        return cls(
+            torch.zeros(dim),
+            torch.ones(dim),
+            normalization_method=normalization_method,
+        )
 
     def save_config(self, path):
         path = Path(path)
-        torch.save({"mean": self.mean, "var": self.var}, path / f"rep_statistics.pt")
+        torch.save(
+            {
+                "mean": self.mean,
+                "var": self.var,
+                "normalization_method": self.normalization_method,
+            },
+            path / f"rep_statistics.pt",
+        )
 
 # ==========================
 #     Denoiser Classes
@@ -353,15 +400,34 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_on
         checkpoint = "final"
 
     config = OmegaConf.load(str(resolved_folder / "config.yaml"))
-    rep_stats_path = str(resolved_folder / "rep_statistics.pt")
+    rep_stats_file = resolved_folder / "rep_statistics.pt"
+    rep_stats_path = str(rep_stats_file)
 
-    # Streaming checkpoints store this path under glp_kwargs.normalizer_config.
-    # Rewrite it to an absolute local path when loading from Hub snapshots.
+    normalizer_config = None
     if "glp_kwargs" in config and "normalizer_config" in config.glp_kwargs:
-        config.glp_kwargs.normalizer_config.rep_statistic = rep_stats_path
+        normalizer_config = config.glp_kwargs.normalizer_config
+
+    normalization_method = "gaussian"
+    if normalizer_config is not None and "normalization_method" in normalizer_config:
+        normalization_method = _canonicalize_normalization_method(
+            normalizer_config.normalization_method
+        )
+
+    # Rewrite rep_statistic to the resolved local path when appropriate.
+    if normalizer_config is not None:
+        if normalization_method == "gaussian":
+            if not rep_stats_file.exists():
+                raise FileNotFoundError(
+                    f"Missing required gaussian normalization statistics at {rep_stats_file}"
+                )
+            normalizer_config.rep_statistic = rep_stats_path
+        else:
+            # log_norm does not require running mean/var stats.
+            normalizer_config.rep_statistic = rep_stats_path if rep_stats_file.exists() else ""
     # Fallback for older/alternate config shapes.
     elif "rep_statistic" in config:
-        config.rep_statistic = rep_stats_path
+        if rep_stats_file.exists():
+            config.rep_statistic = rep_stats_path
     OmegaConf.resolve(config)
     model = GLP(**config.glp_kwargs)
     model.load_pretrained(resolved_folder, name=checkpoint)

@@ -18,10 +18,25 @@ import numpy as np
 
 from gemma2_pipeline.settings import ModelTrainConfig, make_default_model_train_config
 
+
+def canonicalize_normalization_method(method: str | None) -> str:
+    method = "gaussian" if method is None else str(method)
+    method = method.strip().lower().replace("-", "_")
+    if method == "lognorm":
+        method = "log_norm"
+    if method not in {"gaussian", "log_norm"}:
+        raise ValueError(
+            f"Unsupported normalization_method '{method}'. "
+            "Expected one of ['gaussian', 'log_norm']."
+        )
+    return method
+
 def build_train_config_dict(config: ModelTrainConfig) -> dict:
     run_name = config.run_name
     output_path = f"{config.save_root}/runs/{run_name}"
     rep_statistic = config.rep_statistic or f"{config.train_dataset}/rep_statistics.pt"
+    normalization_method = canonicalize_normalization_method(config.normalization_method)
+    normalizer_rep_statistic = "${rep_statistic}" if normalization_method == "gaussian" else ""
 
     return {
         "save_root": config.save_root,
@@ -39,7 +54,9 @@ def build_train_config_dict(config: ModelTrainConfig) -> dict:
         "shuffle": config.shuffle,
         "glp_kwargs": {
             "normalizer_config": {
-                "rep_statistic": "${rep_statistic}",
+                "rep_statistic": normalizer_rep_statistic,
+                "d_input": config.d_input,
+                "normalization_method": normalization_method,
             },
             "denoiser_config": {
                 "d_input": config.d_input,
@@ -121,6 +138,12 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=defaults.batch_size)
     parser.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
     parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=defaults.use_bf16)
+    parser.add_argument(
+        "--normalization-method",
+        choices=["gaussian", "log_norm", "log-norm"],
+        default=defaults.normalization_method,
+        help="Latent normalization: gaussian z-score or signed log transform.",
+    )
 
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=defaults.wandb_enabled)
     parser.add_argument("--wandb-project", default=defaults.wandb_project)
@@ -154,6 +177,7 @@ def run(args: argparse.Namespace) -> None:
         use_bf16=args.use_bf16,
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
+        normalization_method=canonicalize_normalization_method(args.normalization_method),
         wandb_enabled=args.wandb,
         wandb_project=args.wandb_project,
         config_out_path=args.config_out,

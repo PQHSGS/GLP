@@ -16,7 +16,8 @@
   "shuffle": true,
   "glp_kwargs": {
     "normalizer_config": {
-      "rep_statistic": "${rep_statistic}"
+      "rep_statistic": "${rep_statistic}",
+      "normalization_method": "gaussian"
     },
     "denoiser_config": {
       "d_input": 2304,

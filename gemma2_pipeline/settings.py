@@ -71,6 +71,7 @@ class ModelTrainConfig:
     gradient_clipping_threshold: float = 1.0
     log_every_n_steps: int = 10
     save_opt_state: bool = True
+    normalization_method: Literal["gaussian", "log_norm"] = "gaussian"
     warmup_ratio: float = 0.01
     initial_factor: float = 0.01
     final_factor: float = 0.1

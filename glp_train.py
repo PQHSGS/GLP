@@ -202,13 +202,15 @@ def main(device: Optional[str] = None):
     logger.info(f"Saving checkpoints to {output_path}")
     OmegaConf.save(config, output_path / "config.yaml")
 
-    # wait for rep_statistic from producer
-    rep_statistic = config.glp_kwargs.get("normalizer_config", {}).get("rep_statistic")
-    if rep_statistic:
-        if os.path.exists(rep_statistic):
-            logger.info(f"Waiting for rep_statistic {rep_statistic}...")
-            while not os.path.exists(rep_statistic):
-                time.sleep(5)
+    # wait for rep_statistic from producer only when gaussian normalization is used
+    normalizer_config = config.glp_kwargs.get("normalizer_config", {})
+    normalization_method = normalizer_config.get("normalization_method", "gaussian")
+    normalization_method = str(normalization_method).strip().lower().replace("-", "_")
+    rep_statistic = normalizer_config.get("rep_statistic")
+    if normalization_method == "gaussian" and rep_statistic and not os.path.exists(rep_statistic):
+        logger.info(f"Waiting for rep_statistic {rep_statistic}...")
+        while not os.path.exists(rep_statistic):
+            time.sleep(5)
 
     if autocast_device_type == "cuda":
         torch.cuda.set_device(resolved_device)

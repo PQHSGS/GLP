@@ -18,6 +18,7 @@ glp_kwargs:
   # these are training hparams
   normalizer_config:
     rep_statistic: ${rep_statistic}
+    normalization_method: gaussian
   denoiser_config:
     d_input: 2048 # llm hidden dim
     d_model: 4096 # d_input * 2

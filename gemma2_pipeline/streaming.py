@@ -29,12 +29,32 @@ from .settings import FineWebSourceConfig
 
 LOGGER = logging.getLogger(__name__)
 
+
+def canonicalize_normalization_method(method: str | None) -> str:
+    method = "gaussian" if method is None else str(method)
+    method = method.strip().lower().replace("-", "_")
+    if method == "lognorm":
+        method = "log_norm"
+    if method not in {"gaussian", "log_norm"}:
+        raise ValueError(
+            f"Unsupported normalization_method '{method}'. "
+            "Expected one of ['gaussian', 'log_norm']."
+        )
+    return method
+
 def setup_glp_model(hidden_size, args):
     d_model = args.d_model_mult * hidden_size
     d_mlp = args.d_mlp_mult * hidden_size
+    normalization_method = canonicalize_normalization_method(
+        getattr(args, "normalization_method", "gaussian")
+    )
     
     model = GLP(
-        normalizer_config={"rep_statistic": "", "d_input": hidden_size}, # Initializes identity buffer of right shape
+        normalizer_config={
+            "rep_statistic": "",
+            "d_input": hidden_size,
+            "normalization_method": normalization_method,
+        },  # Initializes identity buffer of right shape
         denoiser_config={
             "d_input": hidden_size,
             "d_model": d_model,
@@ -52,6 +72,10 @@ def setup_glp_model(hidden_size, args):
 
 def stream_train(args):
     device = args.device if args.device != "auto" else ("cuda:0" if torch.cuda.is_available() else "cpu")
+    normalization_method = canonicalize_normalization_method(
+        getattr(args, "normalization_method", "gaussian")
+    )
+    use_gaussian_stats = normalization_method == "gaussian"
     
     # 1. Load Gemma Extractor
     LOGGER.info(f"Loading extractor model {args.model_name}")
@@ -87,7 +111,7 @@ def stream_train(args):
         wandb_run = None
 
     tmp_dir = Path("data/tmp_stream")
-    stats = RunningMoments(hidden_size)
+    stats = RunningMoments(hidden_size) if use_gaussian_stats else None
     fineweb = FineWebSourceConfig(
         dataset_name=args.dataset_name,
         dataset_config=args.dataset_config,
@@ -112,7 +136,8 @@ def stream_train(args):
     def save_glp_checkpoint(save_dir: Path):
         save_dir.mkdir(parents=True, exist_ok=True)
         glp_model.save_pretrained(path=save_dir, name="final")
-        save_rep_statistics(stats, save_dir / "rep_statistics.pt")
+        if use_gaussian_stats and stats is not None:
+            save_rep_statistics(stats, save_dir / "rep_statistics.pt")
         
         import yaml
         d_model = args.d_model_mult * hidden_size
@@ -121,7 +146,9 @@ def stream_train(args):
             "model_name": args.model_name,
             "glp_kwargs": {
                 "normalizer_config": {
-                    "rep_statistic": "rep_statistics.pt"
+                    "rep_statistic": "rep_statistics.pt",
+                    "d_input": hidden_size,
+                    "normalization_method": normalization_method,
                 },
                 "denoiser_config": {
                     "d_input": hidden_size,
@@ -183,7 +210,8 @@ def stream_train(args):
             if vectors.numel() == 0:
                 continue
 
-            stats.update(vectors.detach().float().cpu().numpy())
+            if use_gaussian_stats and stats is not None:
+                stats.update(vectors.detach().float().cpu().numpy())
 
             written = write_vectors_to_memmap(
                 writer,
@@ -200,19 +228,25 @@ def stream_train(args):
             LOGGER.warning("No vectors generated in this chunk (dataset exhausted?). Halting training loop early.")
             break
 
-        mean, var = stats.finalize()
-        # rep_statistics stores one scalar per hidden dimension across all seen samples.
-        if mean.ndim != 1 or var.ndim != 1 or mean.shape[0] != hidden_size or var.shape[0] != hidden_size:
-            raise RuntimeError(
-                f"Expected 1D mean/var vectors of length {hidden_size}, got mean={mean.shape}, var={var.shape}"
+        if use_gaussian_stats and stats is not None:
+            mean, var = stats.finalize()
+            # rep_statistics stores one scalar per hidden dimension across all seen samples.
+            if mean.ndim != 1 or var.ndim != 1 or mean.shape[0] != hidden_size or var.shape[0] != hidden_size:
+                raise RuntimeError(
+                    f"Expected 1D mean/var vectors of length {hidden_size}, got mean={mean.shape}, var={var.shape}"
+                )
+            glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
+            glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
+            LOGGER.info(
+                "Updated cumulative normalizer stats from %d vectors (latest chunk: %d).",
+                stats.count,
+                vectors_written,
             )
-        glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
-        glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
-        LOGGER.info(
-            "Updated cumulative normalizer stats from %d vectors (latest chunk: %d).",
-            stats.count,
-            vectors_written,
-        )
+        else:
+            LOGGER.info(
+                "Using normalization_method=%s; skipped cumulative mean/var update.",
+                normalization_method,
+            )
         
         
         train_dataset = load_activation_dataset(str(tmp_dir))
