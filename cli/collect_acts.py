@@ -15,35 +15,42 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from gemma2_pipeline.settings import ActivationCollectionConfig, FineWebSourceConfig
+from gemma2_pipeline.settings import (
+    ActivationCollectionConfig,
+    FineWebSourceConfig,
+    make_default_activation_collection_config,
+)
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
+    defaults = make_default_activation_collection_config()
+    source_defaults = defaults.fineweb
     parser = argparse.ArgumentParser(
-        description="Collect LLM activations into GLP memmap dataset format"
+        description="Collect LLM activations into GLP memmap dataset format",
+        add_help=add_help,
     )
-    parser.add_argument("--model-name", default="meta-llama/Llama-3.2-1B")
-    parser.add_argument("--layer", type=int, default=7)
-    parser.add_argument("--output-dir", default="data/llama1b-layer07-fineweb-localcollect-1M-all")
-    parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--torch-dtype", choices=["float16", "bfloat16", "float32"], default="bfloat16")
+    parser.add_argument("--model-name", default=defaults.model_name)
+    parser.add_argument("--layer", type=int, default=defaults.layer)
+    parser.add_argument("--output-dir", default=defaults.output_dir)
+    parser.add_argument("--device", default=defaults.device)
+    parser.add_argument("--torch-dtype", choices=["float16", "bfloat16", "float32"], default=defaults.torch_dtype)
 
-    parser.add_argument("--dataset-name", default="HuggingFaceFW/fineweb")
-    parser.add_argument("--dataset-config", default="sample-10BT")
-    parser.add_argument("--split", default="train")
-    parser.add_argument("--text-field", default="text")
-    parser.add_argument("--max-documents", type=int, default=50000)
+    parser.add_argument("--dataset-name", default=source_defaults.dataset_name)
+    parser.add_argument("--dataset-config", default=source_defaults.dataset_config)
+    parser.add_argument("--split", default=source_defaults.split)
+    parser.add_argument("--text-field", default=source_defaults.text_field)
+    parser.add_argument("--max-documents", type=int, default=source_defaults.max_documents)
 
-    parser.add_argument("--max-length", type=int, default=2048)
-    parser.add_argument("--token-idx", choices=["last", "all", "random_doc"], default="all")
-    parser.add_argument("--sample-seed", type=int, default=0)
-    parser.add_argument("--drop-bos", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--padding-side", choices=["left", "right"], default="right")
-    parser.add_argument("--document-batch-size", type=int, default=16)
-    parser.add_argument("--forward-batch-size", type=int, default=1)
-    parser.add_argument("--vectors-per-file", type=int, default=50000)
-    parser.add_argument("--max-vectors", type=int, default=1000000)
-    parser.add_argument("--storage-dtype", choices=["float32", "float16", "bfloat16"], default="bfloat16")
+    parser.add_argument("--max-length", type=int, default=defaults.max_length)
+    parser.add_argument("--token-idx", choices=["last", "all", "random_doc"], default=defaults.token_idx)
+    parser.add_argument("--sample-seed", type=int, default=defaults.sample_seed)
+    parser.add_argument("--drop-bos", action=argparse.BooleanOptionalAction, default=defaults.drop_bos)
+    parser.add_argument("--padding-side", choices=["left", "right"], default=defaults.padding_side)
+    parser.add_argument("--document-batch-size", type=int, default=defaults.document_batch_size)
+    parser.add_argument("--forward-batch-size", type=int, default=defaults.forward_batch_size)
+    parser.add_argument("--vectors-per-file", type=int, default=defaults.vectors_per_file)
+    parser.add_argument("--max-vectors", type=int, default=defaults.max_vectors)
+    parser.add_argument("--storage-dtype", choices=["float32", "float16", "bfloat16"], default=defaults.storage_dtype)
     return parser
 
 

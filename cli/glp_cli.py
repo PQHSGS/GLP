@@ -33,23 +33,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="GLP user workflow CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    collect_cmd = subparsers.add_parser("collect", help="Collect activation dataset")
-    for action in build_collect_parser()._actions:
-        if action.dest in {"help"}:
-            continue
-        collect_cmd._add_action(action)
+    subparsers.add_parser(
+        "collect",
+        help="Collect activation dataset",
+        parents=[build_collect_parser(add_help=False)],
+    )
 
-    train_cmd = subparsers.add_parser("train", help="Write config and run GLP training")
-    for action in build_train_parser()._actions:
-        if action.dest in {"help"}:
-            continue
-        train_cmd._add_action(action)
+    subparsers.add_parser(
+        "train",
+        help="Write config and run GLP training",
+        parents=[build_train_parser(add_help=False)],
+    )
 
-    stream_cmd = subparsers.add_parser("stream", help="Stream activations and train in a single process")
-    for action in build_stream_parser()._actions:
-        if action.dest in {"help"}:
-            continue
-        stream_cmd._add_action(action)
+    subparsers.add_parser(
+        "stream",
+        help="Stream activations and train in a single process",
+        parents=[build_stream_parser(add_help=False)],
+    )
 
     return parser
 

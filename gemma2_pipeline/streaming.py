@@ -10,16 +10,20 @@ from tqdm import tqdm
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from glp.denoiser import GLP
-from glp.utils_acts import MemmapWriter, save_acts
+from glp.utils_acts import MemmapWriter
 from glp_train import cosine_scheduler_with_warmup, load_activation_dataset, get_activation_dataloader
 
+from .collect_acts import (
+    build_tracedict_config,
+    extract_activation_vectors,
+    write_vectors_to_memmap,
+)
 from .loading import (
     get_storage_dtype,
     iter_fineweb_texts,
     load_model_and_tokenizer,
-    to_storage_array,
 )
-from .preprocess import batch_items, flatten_layer_activations, sample_random_token_per_document
+from .preprocess import batch_items
 from .stats import RunningMoments, save_rep_statistics
 from .settings import FineWebSourceConfig
 
@@ -136,41 +140,7 @@ def stream_train(args):
         with open(save_dir / "config.yaml", "w") as f:
             yaml.dump(config_dict, f)
     
-    tracedict_config = {
-        "layer_prefix": "model.layers",
-        "layers": [args.layer],
-        "retain": args.retain,
-    }
-
-    def extract_vectors(text_batch: list[str]) -> torch.Tensor:
-        save_token_idx = "all" if args.token_idx == "random_doc" else args.token_idx
-        activations = save_acts(
-            hf_model=hf_model,
-            hf_tokenizer=hf_tokenizer,
-            text=text_batch,
-            tracedict_config=tracedict_config,
-            padding_side=args.padding_side,
-            token_idx=save_token_idx,
-            batch_size=args.forward_batch_size,
-            max_length=args.max_length,
-        )
-        if args.token_idx == "random_doc":
-            tokenized = hf_tokenizer(
-                text_batch,
-                return_tensors="pt",
-                padding="longest",
-                truncation=True,
-                max_length=args.max_length,
-            )
-            vectors = sample_random_token_per_document(
-                activations,
-                tokenized["attention_mask"],
-                drop_bos=args.drop_bos,
-                rng=rng,
-            )
-        else:
-            vectors = flatten_layer_activations(activations, drop_bos=args.drop_bos)
-        return vectors
+    tracedict_config = build_tracedict_config(layer=args.layer, retain=args.retain)
     
     use_autocast = bool(getattr(args, "use_bf16", True) and ("cuda" in str(device)))
     stats_target_vectors = getattr(args, "stats_max_vectors", None)
@@ -199,7 +169,18 @@ def stream_train(args):
             )
             break
 
-        vectors = extract_vectors(text_batch)
+        vectors = extract_activation_vectors(
+            hf_model=hf_model,
+            hf_tokenizer=hf_tokenizer,
+            text_batch=text_batch,
+            tracedict_config=tracedict_config,
+            padding_side=args.padding_side,
+            token_idx=args.token_idx,
+            forward_batch_size=args.forward_batch_size,
+            max_length=args.max_length,
+            drop_bos=args.drop_bos,
+            rng=rng,
+        )
         if vectors.numel() == 0:
             continue
 
@@ -249,18 +230,31 @@ def stream_train(args):
                 LOGGER.warning("Ran out of text batch data.")
                 break
             
-            vectors = extract_vectors(text_batch)
+            vectors = extract_activation_vectors(
+                hf_model=hf_model,
+                hf_tokenizer=hf_tokenizer,
+                text_batch=text_batch,
+                tracedict_config=tracedict_config,
+                padding_side=args.padding_side,
+                token_idx=args.token_idx,
+                forward_batch_size=args.forward_batch_size,
+                max_length=args.max_length,
+                drop_bos=args.drop_bos,
+                rng=rng,
+            )
             if vectors.numel() == 0: continue
             
             remaining = args.stream_chunk_size - vectors_written
-            vectors = vectors[:remaining]
-            
-            storage_vectors = to_storage_array(vectors, stream_storage_dtype)
-            
-            for row in storage_vectors:
-                writer.write(np.ascontiguousarray(row))
-            
-            vectors_written += int(storage_vectors.shape[0])
+            written = write_vectors_to_memmap(
+                writer,
+                vectors,
+                stream_storage_dtype,
+                max_rows=remaining,
+            )
+            if written == 0:
+                continue
+
+            vectors_written += written
             
         writer.flush()
         if vectors_written == 0:

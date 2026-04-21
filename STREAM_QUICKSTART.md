@@ -61,6 +61,7 @@ WandB logs now include:
 ```bash
 python cli/glp_cli.py stream \
   --run-name 1m \
+  --stream-chunk-size 1000000 \
   --total-steps 244 \
   --checkpoint-token-step 1000000 \
   --wandb
@@ -80,7 +81,7 @@ Equivalent key settings used by that script:
 - batch_size: 4096
 - stream_chunk_size: 65536
 - max_documents: 1000000
-- stats_max_vectors: 1000000000
+- stats_max_vectors: 10000000
 - checkpoint_token_step: 100000000
 
 ## 5. Push Checkpoints to Hugging Face
@@ -103,5 +104,6 @@ python cli/push_to_hf.py \
 
 - Keep token mode at all and drop_bos enabled for consistency with your validated localcollect setup.
 - Keep layer fixed at 7 for Llama-1B to match the accepted training profile.
+- For static-like 1M comparison, set stream_chunk_size to 1000000 so shuffle happens across the full 1M window instead of per 65,536 chunk.
 - If GPU memory is tight, reduce batch_size first.
 - If you change batch_size, recalculate total_steps for your target activation budget.

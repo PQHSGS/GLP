@@ -74,9 +74,24 @@ class ModelTrainConfig:
     warmup_ratio: float = 0.01
     initial_factor: float = 0.01
     final_factor: float = 0.1
-    wandb_enabled: bool = True
+    wandb_enabled: bool = False
     wandb_project: str = "glp"
-    config_out_path: str = "configs/train_llama1b_our.yaml"
+    config_out_path: str = "configs/train_llama1b_our.json"
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def make_default_fineweb_source_config() -> FineWebSourceConfig:
+    """Return a fresh default source config for CLI default wiring."""
+    return FineWebSourceConfig()
+
+
+def make_default_activation_collection_config() -> ActivationCollectionConfig:
+    """Return a fresh default activation-collection config for CLI defaults."""
+    return ActivationCollectionConfig()
+
+
+def make_default_model_train_config() -> ModelTrainConfig:
+    """Return a fresh default train config for CLI defaults."""
+    return ModelTrainConfig()

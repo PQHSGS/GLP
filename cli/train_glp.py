@@ -16,7 +16,7 @@ if __package__ in {None, ""}:
 
 import numpy as np
 
-from gemma2_pipeline.settings import ModelTrainConfig
+from gemma2_pipeline.settings import ModelTrainConfig, make_default_model_train_config
 
 def build_train_config_dict(config: ModelTrainConfig) -> dict:
     run_name = config.run_name
@@ -95,34 +95,37 @@ def infer_hidden_size(dataset_dir: Path) -> int:
     return int(first[2] - first[1])
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
+    defaults = make_default_model_train_config()
+    d_model_mult_default = max(1, defaults.d_model // defaults.d_input)
+    d_mlp_mult_default = max(1, defaults.d_mlp // defaults.d_input)
+
     parser = argparse.ArgumentParser(
-        description="Prepare GLP config from activation memmaps and run training"
+        description="Prepare GLP config from activation memmaps and run training",
+        add_help=add_help,
     )
     parser.add_argument("--train-dataset", required=True, help="Path to memmap activation dataset folder")
-    parser.add_argument("--model-name", default="meta-llama/Llama-3.2-1B")
-    parser.add_argument("--layer", type=int, default=7)
-    parser.add_argument("--device", default="auto")
+    parser.add_argument("--model-name", default=defaults.model_name)
+    parser.add_argument("--layer", type=int, default=defaults.layer)
+    parser.add_argument("--device", default=defaults.device)
 
-    parser.add_argument("--run-name", default="glp-llama1b-d3_static-1B")
-    parser.add_argument("--save-root", default=".")
-    parser.add_argument("--config-out", default="configs/train_llama1b_our.yaml")
+    parser.add_argument("--run-name", default=defaults.run_name)
+    parser.add_argument("--save-root", default=defaults.save_root)
+    parser.add_argument("--config-out", default=defaults.config_out_path)
 
-    parser.add_argument("--denoiser-layers", type=int, default=3)
-    parser.add_argument("--d-model-mult", type=int, default=2)
-    parser.add_argument("--d-mlp-mult", type=int, default=4)
+    parser.add_argument("--denoiser-layers", type=int, default=defaults.denoiser_layers)
+    parser.add_argument("--d-model-mult", type=int, default=d_model_mult_default)
+    parser.add_argument("--d-mlp-mult", type=int, default=d_mlp_mult_default)
 
-    parser.add_argument("--num-epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=4096)
-    parser.add_argument("--learning-rate", type=float, default=5e-5)
-    parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--num-epochs", type=int, default=defaults.num_epochs)
+    parser.add_argument("--batch-size", type=int, default=defaults.batch_size)
+    parser.add_argument("--learning-rate", type=float, default=defaults.learning_rate)
+    parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=defaults.use_bf16)
 
-    parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--wandb-project", default="glp")
+    parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=defaults.wandb_enabled)
+    parser.add_argument("--wandb-project", default=defaults.wandb_project)
 
     parser.add_argument("--write-only", action="store_true", help="Only write config, do not start training")
-    parser.add_argument("--python-bin", default="python3")
-    parser.add_argument("--working-dir", default=".")
     return parser
 
 

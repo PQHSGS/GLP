@@ -32,6 +32,77 @@ def _init_writer(config: ActivationCollectionConfig, hidden_size: int) -> tuple[
     return writer, output_dir
 
 
+def build_tracedict_config(layer: int, retain: str = "output") -> dict:
+    return {
+        "layer_prefix": "model.layers",
+        "layers": [layer],
+        "retain": retain,
+    }
+
+
+def extract_activation_vectors(
+    *,
+    hf_model,
+    hf_tokenizer,
+    text_batch: list[str],
+    tracedict_config: dict,
+    padding_side: str,
+    token_idx: str,
+    forward_batch_size: int,
+    max_length: int,
+    drop_bos: bool,
+    rng: np.random.Generator,
+) -> torch.Tensor:
+    save_token_idx = "all" if token_idx == "random_doc" else token_idx
+    activations = save_acts(
+        hf_model=hf_model,
+        hf_tokenizer=hf_tokenizer,
+        text=text_batch,
+        tracedict_config=tracedict_config,
+        padding_side=padding_side,
+        token_idx=save_token_idx,
+        batch_size=forward_batch_size,
+        max_length=max_length,
+    )
+
+    if token_idx == "random_doc":
+        tokenized = hf_tokenizer(
+            text_batch,
+            return_tensors="pt",
+            padding="longest",
+            truncation=True,
+            max_length=max_length,
+        )
+        return sample_random_token_per_document(
+            activations,
+            tokenized["attention_mask"],
+            drop_bos=drop_bos,
+            rng=rng,
+        )
+    return flatten_layer_activations(activations, drop_bos=drop_bos)
+
+
+def write_vectors_to_memmap(
+    writer: MemmapWriter,
+    vectors: torch.Tensor,
+    storage_dtype: str,
+    *,
+    max_rows: int | None = None,
+) -> int:
+    if max_rows is not None:
+        if max_rows <= 0:
+            return 0
+        vectors = vectors[:max_rows]
+
+    if vectors.numel() == 0 or vectors.shape[0] == 0:
+        return 0
+
+    storage_vectors = to_storage_array(vectors, storage_dtype)
+    for row in storage_vectors:
+        writer.write(np.ascontiguousarray(row))
+    return int(storage_vectors.shape[0])
+
+
 def collect_activations(config: ActivationCollectionConfig) -> dict:
     """Extract Gemma activations from FineWeb and store in GLP memmap format."""
     hf_model, hf_tokenizer = load_model_and_tokenizer(
@@ -44,11 +115,7 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
     writer, output_dir = _init_writer(config, hidden_size)
     stats = RunningMoments(hidden_size)
 
-    tracedict_config = {
-        "layer_prefix": "model.layers",
-        "layers": [config.layer],
-        "retain": "output",
-    }
+    tracedict_config = build_tracedict_config(layer=config.layer, retain="output")
 
     documents_processed = 0
     vectors_written = 0
@@ -62,36 +129,18 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
     ):
         documents_processed += len(text_batch)
 
-        save_token_idx = "all" if config.token_idx == "random_doc" else config.token_idx
-
-        activations = save_acts(
+        vectors = extract_activation_vectors(
             hf_model=hf_model,
             hf_tokenizer=hf_tokenizer,
-            text=text_batch,
+            text_batch=text_batch,
             tracedict_config=tracedict_config,
             padding_side=config.padding_side,
-            token_idx=save_token_idx,
-            batch_size=config.forward_batch_size,
+            token_idx=config.token_idx,
+            forward_batch_size=config.forward_batch_size,
             max_length=config.max_length,
+            drop_bos=config.drop_bos,
+            rng=rng,
         )
-
-        if config.token_idx == "random_doc":
-            tokenized = hf_tokenizer(
-                text_batch,
-                return_tensors="pt",
-                padding="longest",
-                truncation=True,
-                max_length=config.max_length,
-            )
-            attention_mask = tokenized["attention_mask"]
-            vectors = sample_random_token_per_document(
-                activations,
-                attention_mask,
-                drop_bos=config.drop_bos,
-                rng=rng,
-            )
-        else:
-            vectors = flatten_layer_activations(activations, drop_bos=config.drop_bos)
         if vectors.numel() == 0:
             continue
 
@@ -105,11 +154,11 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
             break
 
         stats.update(vectors.detach().float().cpu().numpy())
-        storage_vectors = to_storage_array(vectors, config.storage_dtype)
-        for row in storage_vectors:
-            writer.write(np.ascontiguousarray(row))
-
-        vectors_written += int(storage_vectors.shape[0])
+        vectors_written += write_vectors_to_memmap(
+            writer,
+            vectors,
+            config.storage_dtype,
+        )
         if config.max_vectors is not None and vectors_written >= config.max_vectors:
             break
 
