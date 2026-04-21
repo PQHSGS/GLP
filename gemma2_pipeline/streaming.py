@@ -141,75 +141,9 @@ def stream_train(args):
             yaml.dump(config_dict, f)
     
     tracedict_config = build_tracedict_config(layer=args.layer, retain=args.retain)
-    
     use_autocast = bool(getattr(args, "use_bf16", True) and ("cuda" in str(device)))
-    stats_target_vectors = getattr(args, "stats_max_vectors", None)
-    if stats_target_vectors is None:
-        stats_target_vectors = int(args.total_steps * args.batch_size)
-    else:
-        stats_target_vectors = int(stats_target_vectors)
-    if stats_target_vectors <= 0:
-        raise ValueError(f"Expected positive stats target vectors, got {stats_target_vectors}")
 
-    LOGGER.info(
-        "Precomputing fixed normalization stats over up to %d vectors before optimization.",
-        stats_target_vectors,
-    )
-    stats_batch_iterator = build_batch_iterator()
-    stats_pbar = tqdm(total=stats_target_vectors, desc="Precompute stats", unit="vec")
-    stats_vectors_seen = 0
-
-    while stats_vectors_seen < stats_target_vectors:
-        text_batch = next(stats_batch_iterator, None)
-        if not text_batch:
-            LOGGER.warning(
-                "Dataset exhausted during stats precompute at %d/%d vectors.",
-                stats_vectors_seen,
-                stats_target_vectors,
-            )
-            break
-
-        vectors = extract_activation_vectors(
-            hf_model=hf_model,
-            hf_tokenizer=hf_tokenizer,
-            text_batch=text_batch,
-            tracedict_config=tracedict_config,
-            padding_side=args.padding_side,
-            token_idx=args.token_idx,
-            forward_batch_size=args.forward_batch_size,
-            max_length=args.max_length,
-            drop_bos=args.drop_bos,
-            rng=rng,
-        )
-        if vectors.numel() == 0:
-            continue
-
-        remaining = stats_target_vectors - stats_vectors_seen
-        vectors = vectors[:remaining]
-        stats_vectors = vectors.detach().float().cpu().numpy()
-        stats.update(stats_vectors)
-
-        seen = int(stats_vectors.shape[0])
-        stats_vectors_seen += seen
-        stats_pbar.update(seen)
-
-    stats_pbar.close()
-
-    if stats.count == 0:
-        raise RuntimeError("No activations were observed while precomputing normalization stats.")
-
-    mean, var = stats.finalize()
-    # Llama-style alignment: rep_statistics stores one scalar per hidden dimension.
-    # This is a mean vector and variance vector over all observed samples, not per-sample stats.
-    if mean.ndim != 1 or var.ndim != 1 or mean.shape[0] != hidden_size or var.shape[0] != hidden_size:
-        raise RuntimeError(
-            f"Expected 1D mean/var vectors of length {hidden_size}, got mean={mean.shape}, var={var.shape}"
-        )
-    glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
-    glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
-    LOGGER.info("Frozen normalizer stats from %d vectors.", stats.count)
-
-    # Start a fresh data iterator for the actual training pass.
+    # Use a single streaming pass and update normalization stats cumulatively per chunk.
     batch_iterator = build_batch_iterator()
     
     while global_step < total_steps:
@@ -245,11 +179,16 @@ def stream_train(args):
             if vectors.numel() == 0: continue
             
             remaining = args.stream_chunk_size - vectors_written
+            vectors = vectors[:remaining]
+            if vectors.numel() == 0:
+                continue
+
+            stats.update(vectors.detach().float().cpu().numpy())
+
             written = write_vectors_to_memmap(
                 writer,
                 vectors,
                 stream_storage_dtype,
-                max_rows=remaining,
             )
             if written == 0:
                 continue
@@ -260,6 +199,20 @@ def stream_train(args):
         if vectors_written == 0:
             LOGGER.warning("No vectors generated in this chunk (dataset exhausted?). Halting training loop early.")
             break
+
+        mean, var = stats.finalize()
+        # rep_statistics stores one scalar per hidden dimension across all seen samples.
+        if mean.ndim != 1 or var.ndim != 1 or mean.shape[0] != hidden_size or var.shape[0] != hidden_size:
+            raise RuntimeError(
+                f"Expected 1D mean/var vectors of length {hidden_size}, got mean={mean.shape}, var={var.shape}"
+            )
+        glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
+        glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
+        LOGGER.info(
+            "Updated cumulative normalizer stats from %d vectors (latest chunk: %d).",
+            stats.count,
+            vectors_written,
+        )
         
         
         train_dataset = load_activation_dataset(str(tmp_dir))

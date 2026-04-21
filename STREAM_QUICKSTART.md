@@ -46,7 +46,11 @@ The stream CLI now defaults to the validated Llama-1B collection/training profil
 - warmup_ratio: 0.01
 - initial_factor: 0.01
 - final_factor: 0.1
-- stats_max_vectors: 1000000
+
+Normalization behavior in stream mode:
+
+- Mean/variance are updated cumulatively after each streamed chunk.
+- With stream_chunk_size 1000000, each update is based on a large 1M-vector window, then accumulated over the run.
 
 WandB logs now include:
 
@@ -79,9 +83,8 @@ Equivalent key settings used by that script:
 
 - total_steps: 244141
 - batch_size: 4096
-- stream_chunk_size: 65536
+- stream_chunk_size: 1000000
 - max_documents: 1000000
-- stats_max_vectors: 10000000
 - checkpoint_token_step: 100000000
 
 ## 5. Push Checkpoints to Hugging Face

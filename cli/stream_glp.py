@@ -67,7 +67,6 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--final-factor", type=float, default=train_defaults.final_factor)
     parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=train_defaults.use_bf16)
     parser.add_argument("--shuffle", action=argparse.BooleanOptionalAction, default=train_defaults.shuffle)
-    parser.add_argument("--stats-max-vectors", type=int, default=1000000, help="Number of vectors used to precompute normalization stats")
     
     parser.add_argument("--save-root", default=".")
     parser.add_argument("--run-name", default="glp-stream")
