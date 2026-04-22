@@ -22,14 +22,69 @@ def _canonicalize_normalization_method(method):
     if method is None:
         return "gaussian"
     method = str(method).strip().lower().replace("-", "_")
-    if method == "lognorm":
+    if method in {"lognorm"}:
         method = "log_norm"
-    if method not in {"gaussian", "log_norm"}:
+
+    aliases = {
+        "rms": "rmsnorm",
+        "rms_norm": "rmsnorm",
+        "zscore": "gaussian",
+        "z_score": "gaussian",
+    }
+    method = aliases.get(method, method)
+
+    if method in {"gaussian", "log_norm", "rmsnorm"}:
+        return method
+
+    if method == "quantile":
+        return "quantile_99"
+
+    if method.startswith("quantile_"):
+        quantile_raw = method.split("_", 1)[1]
+        quantile_percent = _parse_quantile_percent(quantile_raw)
+        return f"quantile_{_format_quantile_percent(quantile_percent)}"
+
+    # Allow shorthand numeric input like "99" or "0.99" for quantile norm.
+    try:
+        quantile_percent = _parse_quantile_percent(method)
+        return f"quantile_{_format_quantile_percent(quantile_percent)}"
+    except ValueError:
+        pass
+
+    raise ValueError(
+        f"Unsupported normalization_method '{method}'. "
+        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'quantile_XX', '99', '0.99']."
+    )
+
+
+def _parse_quantile_percent(raw_value):
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"Unsupported normalization_method '{method}'. "
-            "Expected one of ['gaussian', 'log_norm']."
+            f"Invalid quantile specification '{raw_value}'. "
+            "Use values like 99, 97, or 0.99."
+        ) from exc
+
+    if value <= 1.0:
+        value *= 100.0
+
+    if not (0.0 < value < 100.0):
+        raise ValueError(
+            f"Quantile percent must be in (0, 100), got {value}."
         )
-    return method
+    return value
+
+
+def _format_quantile_percent(value):
+    rounded = round(value)
+    if abs(value - rounded) < 1e-6:
+        return str(int(rounded))
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def _normalization_requires_stats(method):
+    return _canonicalize_normalization_method(method) != "log_norm"
 
 # ==========================
 #     Normalizer Class
@@ -62,7 +117,14 @@ class Normalizer(nn.Module):
         mean = self.get_layer_stat(self.mean, layer_idx)
         var = self.get_layer_stat(self.var, layer_idx)
         var = torch.clamp(var, min=1e-8)
-        return (rep.to(mean.device) - mean) / torch.sqrt(var)
+        scale = torch.sqrt(var)
+
+        if self.normalization_method == "gaussian":
+            return (rep.to(mean.device) - mean) / scale
+        if self.normalization_method == "rmsnorm" or self.normalization_method.startswith("quantile_"):
+            return rep.to(scale.device) / scale
+
+        raise ValueError(f"Unsupported normalization_method '{self.normalization_method}'")
     
     def denormalize(self, rep, layer_idx=None):
         if self.normalization_method == "log_norm":
@@ -72,7 +134,14 @@ class Normalizer(nn.Module):
         mean = self.get_layer_stat(self.mean, layer_idx)
         var = self.get_layer_stat(self.var, layer_idx)
         var = torch.clamp(var, min=1e-8)
-        return rep.to(var.device) * torch.sqrt(var) + mean
+        scale = torch.sqrt(var)
+
+        if self.normalization_method == "gaussian":
+            return rep.to(var.device) * scale + mean
+        if self.normalization_method == "rmsnorm" or self.normalization_method.startswith("quantile_"):
+            return rep.to(scale.device) * scale
+
+        raise ValueError(f"Unsupported normalization_method '{self.normalization_method}'")
     
     def check_normalized(self, rep, atol=2.0):
         if self.normalization_method != "gaussian":
@@ -230,7 +299,8 @@ class TransformerMLPDenoiser(nn.Module):
         # prepare sinusoidal timestep embedding
         timesteps = timesteps.flatten().to(x.device)
         assert timesteps.shape == (x.shape[0],)
-        t_emb = timestep_embedding(timesteps, self.d_model, repeat_only=False)
+        # Keep embedding dtype aligned with model activations to avoid mixed-precision linear errors.
+        t_emb = timestep_embedding(timesteps, self.d_model, repeat_only=False).to(dtype=x.dtype)
         emb = self.time_embed(t_emb)
         # prepare sinusoidal layer depth embedding
         use_layer_embed = self.multi_layer_n_layers is not None and layer_idx is not None
@@ -238,7 +308,7 @@ class TransformerMLPDenoiser(nn.Module):
             if self.multi_layer_n_layers <= 1:
                 raise ValueError("multi_layer_n_layers must be > 1 when using layer_idx")
             layer_depth = layer_idx.float() / (self.multi_layer_n_layers - 1)
-            layer_emb = timestep_embedding(layer_depth, self.d_model, repeat_only=False)
+            layer_emb = timestep_embedding(layer_depth, self.d_model, repeat_only=False).to(dtype=x.dtype)
             emb += self.layer_embed(layer_emb)
         # apply MLP blocks
         x = self.in_proj(x)
@@ -341,14 +411,19 @@ class GLP(nn.Module):
             **kwargs
         )
         # compute loss
-        loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs)
-        
+        if self.normalizer.normalization_method == "log_norm":
+            loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs) * 1e5
+        else:
+            loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs)
+        tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
+        weights = 1.0 / tgt_norm
+
+        # loss = ((weights * (pred - tgt)) ** 2).mean()
         # ===== proper metrics =====
 
+        # relative squared error  
         pred = outputs.view(-1, outputs.shape[-1])
         tgt  = target.view(-1, target.shape[-1])
-
-        # relative squared error  
         tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
         loss_rel = loss_rel.mean()
@@ -367,6 +442,7 @@ class GLP(nn.Module):
             latents=outputs,
             timesteps=timesteps,
             loss=loss,
+            tgt_norm=tgt_norm.mean(),
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
@@ -439,14 +515,15 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_on
 
     # Rewrite rep_statistic to the resolved local path when appropriate.
     if normalizer_config is not None:
-        if normalization_method == "gaussian":
+        if _normalization_requires_stats(normalization_method):
             if not rep_stats_file.exists():
                 raise FileNotFoundError(
-                    f"Missing required gaussian normalization statistics at {rep_stats_file}"
+                    f"Missing required normalization statistics at {rep_stats_file} "
+                    f"for method '{normalization_method}'"
                 )
             normalizer_config.rep_statistic = rep_stats_path
         else:
-            # log_norm does not require running mean/var stats.
+            # log_norm does not require running mean/var-like stats.
             normalizer_config.rep_statistic = rep_stats_path if rep_stats_file.exists() else ""
     # Fallback for older/alternate config shapes.
     elif "rep_statistic" in config:

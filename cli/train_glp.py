@@ -22,21 +22,72 @@ from gemma2_pipeline.settings import ModelTrainConfig, make_default_model_train_
 def canonicalize_normalization_method(method: str | None) -> str:
     method = "gaussian" if method is None else str(method)
     method = method.strip().lower().replace("-", "_")
-    if method == "lognorm":
+    if method in {"lognorm"}:
         method = "log_norm"
-    if method not in {"gaussian", "log_norm"}:
+
+    aliases = {
+        "rms": "rmsnorm",
+        "rms_norm": "rmsnorm",
+        "zscore": "gaussian",
+        "z_score": "gaussian",
+    }
+    method = aliases.get(method, method)
+
+    if method in {"gaussian", "log_norm", "rmsnorm"}:
+        return method
+
+    if method == "quantile":
+        return "quantile_99"
+
+    if method.startswith("quantile_"):
+        quantile_raw = method.split("_", 1)[1]
+        quantile_percent = parse_quantile_percent(quantile_raw)
+        return f"quantile_{format_quantile_percent(quantile_percent)}"
+
+    # Allow shorthand numeric input like "99" or "0.99".
+    try:
+        quantile_percent = parse_quantile_percent(method)
+        return f"quantile_{format_quantile_percent(quantile_percent)}"
+    except ValueError:
+        pass
+
+    raise ValueError(
+        f"Unsupported normalization_method '{method}'. "
+        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'quantile_XX', '99', '0.99']."
+    )
+
+
+def parse_quantile_percent(raw_value: str) -> float:
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"Unsupported normalization_method '{method}'. "
-            "Expected one of ['gaussian', 'log_norm']."
+            f"Invalid quantile specification '{raw_value}'. "
+            "Use values like 99, 97, or 0.99."
+        ) from exc
+
+    if value <= 1.0:
+        value *= 100.0
+
+    if not (0.0 < value < 100.0):
+        raise ValueError(
+            f"Quantile percent must be in (0, 100), got {value}."
         )
-    return method
+    return value
+
+
+def format_quantile_percent(value: float) -> str:
+    rounded = round(value)
+    if abs(value - rounded) < 1e-6:
+        return str(int(rounded))
+    return f"{value:.4f}".rstrip("0").rstrip(".")
 
 def build_train_config_dict(config: ModelTrainConfig) -> dict:
     run_name = config.run_name
     output_path = f"{config.save_root}/runs/{run_name}"
     rep_statistic = config.rep_statistic or f"{config.train_dataset}/rep_statistics.pt"
     normalization_method = canonicalize_normalization_method(config.normalization_method)
-    normalizer_rep_statistic = "${rep_statistic}" if normalization_method == "gaussian" else ""
+    normalizer_rep_statistic = "" if normalization_method == "log_norm" else "${rep_statistic}"
 
     return {
         "save_root": config.save_root,
@@ -140,9 +191,11 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=defaults.use_bf16)
     parser.add_argument(
         "--normalization-method",
-        choices=["gaussian", "log_norm", "log-norm"],
         default=defaults.normalization_method,
-        help="Latent normalization: gaussian z-score or signed log transform.",
+        help=(
+            "Latent normalization method. Examples: gaussian, log_norm, rmsnorm, "
+            "quantile_99, quantile_97, 99, 97, 0.99"
+        ),
     )
 
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=defaults.wandb_enabled)

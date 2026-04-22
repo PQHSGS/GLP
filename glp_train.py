@@ -206,8 +206,9 @@ def main(device: Optional[str] = None):
     normalizer_config = config.glp_kwargs.get("normalizer_config", {})
     normalization_method = normalizer_config.get("normalization_method", "gaussian")
     normalization_method = str(normalization_method).strip().lower().replace("-", "_")
+    requires_stats = normalization_method != "log_norm"
     rep_statistic = normalizer_config.get("rep_statistic")
-    if normalization_method == "gaussian" and rep_statistic and not os.path.exists(rep_statistic):
+    if requires_stats and rep_statistic and not os.path.exists(rep_statistic):
         logger.info(f"Waiting for rep_statistic {rep_statistic}...")
         while not os.path.exists(rep_statistic):
             time.sleep(5)

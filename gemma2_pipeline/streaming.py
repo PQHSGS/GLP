@@ -33,14 +33,75 @@ LOGGER = logging.getLogger(__name__)
 def canonicalize_normalization_method(method: str | None) -> str:
     method = "gaussian" if method is None else str(method)
     method = method.strip().lower().replace("-", "_")
-    if method == "lognorm":
+    if method in {"lognorm"}:
         method = "log_norm"
-    if method not in {"gaussian", "log_norm"}:
+
+    aliases = {
+        "rms": "rmsnorm",
+        "rms_norm": "rmsnorm",
+        "zscore": "gaussian",
+        "z_score": "gaussian",
+    }
+    method = aliases.get(method, method)
+
+    if method in {"gaussian", "log_norm", "rmsnorm"}:
+        return method
+
+    if method == "quantile":
+        return "quantile_99"
+
+    if method.startswith("quantile_"):
+        quantile_raw = method.split("_", 1)[1]
+        quantile_percent = parse_quantile_percent(quantile_raw)
+        return f"quantile_{format_quantile_percent(quantile_percent)}"
+
+    # Allow shorthand numeric input like "99" or "0.99".
+    try:
+        quantile_percent = parse_quantile_percent(method)
+        return f"quantile_{format_quantile_percent(quantile_percent)}"
+    except ValueError:
+        pass
+
+    raise ValueError(
+        f"Unsupported normalization_method '{method}'. "
+        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'quantile_XX', '99', '0.99']."
+    )
+
+
+def parse_quantile_percent(raw_value: str) -> float:
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"Unsupported normalization_method '{method}'. "
-            "Expected one of ['gaussian', 'log_norm']."
+            f"Invalid quantile specification '{raw_value}'. "
+            "Use values like 99, 97, or 0.99."
+        ) from exc
+
+    if value <= 1.0:
+        value *= 100.0
+
+    if not (0.0 < value < 100.0):
+        raise ValueError(
+            f"Quantile percent must be in (0, 100), got {value}."
         )
-    return method
+    return value
+
+
+def format_quantile_percent(value: float) -> str:
+    rounded = round(value)
+    if abs(value - rounded) < 1e-6:
+        return str(int(rounded))
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def normalization_requires_stats(method: str) -> bool:
+    return method != "log_norm"
+
+
+def quantile_percent_from_method(method: str) -> float | None:
+    if method.startswith("quantile_"):
+        return float(method.split("_", 1)[1])
+    return None
 
 def setup_glp_model(hidden_size, args):
     d_model = args.d_model_mult * hidden_size
@@ -75,7 +136,11 @@ def stream_train(args):
     normalization_method = canonicalize_normalization_method(
         getattr(args, "normalization_method", "gaussian")
     )
+    use_stats = normalization_requires_stats(normalization_method)
     use_gaussian_stats = normalization_method == "gaussian"
+    use_rmsnorm_stats = normalization_method == "rmsnorm"
+    quantile_percent = quantile_percent_from_method(normalization_method)
+    use_quantile_stats = quantile_percent is not None
     
     # 1. Load Gemma Extractor
     LOGGER.info(f"Loading extractor model {args.model_name}")
@@ -112,6 +177,10 @@ def stream_train(args):
 
     tmp_dir = Path("data/tmp_stream")
     stats = RunningMoments(hidden_size) if use_gaussian_stats else None
+    second_moment_sum = np.zeros(hidden_size, dtype=np.float64) if use_rmsnorm_stats else None
+    second_moment_count = 0
+    quantile_scale = np.ones(hidden_size, dtype=np.float64) if use_quantile_stats else None
+    quantile_count = 0
     fineweb = FineWebSourceConfig(
         dataset_name=args.dataset_name,
         dataset_config=args.dataset_config,
@@ -210,8 +279,25 @@ def stream_train(args):
             if vectors.numel() == 0:
                 continue
 
-            if use_gaussian_stats and stats is not None:
-                stats.update(vectors.detach().float().cpu().numpy())
+            if use_stats:
+                vectors_np = vectors.detach().float().cpu().numpy().astype(np.float64, copy=False)
+
+                if use_gaussian_stats and stats is not None:
+                    stats.update(vectors_np)
+
+                if use_rmsnorm_stats and second_moment_sum is not None:
+                    second_moment_sum += np.square(vectors_np).sum(axis=0)
+                    second_moment_count += vectors_np.shape[0]
+
+                if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:
+                    chunk_q = np.percentile(np.abs(vectors_np), quantile_percent, axis=0)
+                    batch_count = vectors_np.shape[0]
+                    if quantile_count == 0:
+                        quantile_scale = chunk_q
+                    else:
+                        total = quantile_count + batch_count
+                        quantile_scale = (quantile_scale * quantile_count + chunk_q * batch_count) / total
+                    quantile_count += batch_count
 
             written = write_vectors_to_memmap(
                 writer,
@@ -242,6 +328,32 @@ def stream_train(args):
                 stats.count,
                 vectors_written,
             )
+        elif use_rmsnorm_stats and second_moment_sum is not None:
+            if second_moment_count <= 0:
+                raise RuntimeError("No samples observed for rmsnorm statistics.")
+
+            rms_sq = second_moment_sum / second_moment_count
+            rms_sq = np.maximum(rms_sq, 1e-8)
+            glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=device)
+            glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=device)
+            LOGGER.info(
+                "Updated cumulative rmsnorm stats from %d vectors (latest chunk: %d).",
+                second_moment_count,
+                vectors_written,
+            )
+        elif use_quantile_stats and quantile_scale is not None:
+            if quantile_count <= 0:
+                raise RuntimeError("No samples observed for quantile normalization statistics.")
+
+            scale = np.maximum(quantile_scale, 1e-6)
+            glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=device)
+            glp_model.normalizer.var = torch.tensor(scale * scale, dtype=torch.float32, device=device)
+            LOGGER.info(
+                "Updated cumulative quantile-%s stats from %d vectors (latest chunk: %d).",
+                format_quantile_percent(quantile_percent or 99.0),
+                quantile_count,
+                vectors_written,
+            )
         else:
             LOGGER.info(
                 "Using normalization_method=%s; skipped cumulative mean/var update.",
@@ -265,6 +377,7 @@ def stream_train(args):
             with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
                 outputs = glp_model(**batch)
                 loss = outputs.loss
+                tgt_norm = outputs.tgt_norm
                 loss_rel = outputs.loss_rel
                 loss_raw = outputs.loss_raw
                 cos_sim = outputs.cos_sim
@@ -289,6 +402,7 @@ def stream_train(args):
                         "train/loss": loss.item(),
                         "train/loss_rel": loss_rel.item(),
                         "train/loss_raw": loss_raw.item(),
+                        "train/target_norm": tgt_norm.item(),
                         "train/cos_sim": cos_sim.item(),
                         "train/learning_rate": scheduler.get_last_lr()[0],
                         "train/grad_norm": grad_norm_value,

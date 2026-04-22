@@ -62,9 +62,11 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=train_defaults.learning_rate)
     parser.add_argument(
         "--normalization-method",
-        choices=["gaussian", "log_norm", "log-norm"],
         default=train_defaults.normalization_method,
-        help="Latent normalization: gaussian z-score or signed log transform.",
+        help=(
+            "Latent normalization method. Examples: gaussian, log_norm, rmsnorm, "
+            "quantile_99, quantile_97, 99, 97, 0.99"
+        ),
     )
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
     parser.add_argument("--log-every-n-steps", type=int, default=train_defaults.log_every_n_steps)
