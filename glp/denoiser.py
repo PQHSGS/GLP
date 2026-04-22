@@ -415,8 +415,7 @@ class GLP(nn.Module):
             loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs) * 1e5
         else:
             loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs)
-        tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
-        weights = 1.0 / tgt_norm
+
 
         # loss = ((weights * (pred - tgt)) ** 2).mean()
         # ===== proper metrics =====
@@ -424,6 +423,8 @@ class GLP(nn.Module):
         # relative squared error  
         pred = outputs.view(-1, outputs.shape[-1])
         tgt  = target.view(-1, target.shape[-1])
+        tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
+        weights = 1.0 / tgt_norm
         tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
         loss_rel = loss_rel.mean()
