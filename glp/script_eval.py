@@ -88,6 +88,8 @@ def compute_pca(Z, k=None):
     return W, Z_proj
 
 def plot_pca(X, Y, label_X="Real", label_Y="Generated", title="", pc_idxs=(0, 1), alpha=0.3, half_mask=True):
+    X = X.float()
+    Y = Y.float()
     Z = torch.cat((X, Y), dim=0)
     W, _ = compute_pca(Z, k=None)
     
@@ -165,8 +167,8 @@ def evaluate_sparse_probing(device="cuda:0"):
     gen_acts = torch.cat(gen_acts, dim=0)
     gen_acts = model.normalizer.denormalize(gen_acts, layer_idx=config.layer_idx)
 
-    gen_acts = gen_acts[:, 0, :].detach().cpu().numpy()
-    ref_acts = ref_acts[:, 0, :].detach().cpu().numpy()
+    gen_acts = gen_acts[:, 0, :].detach().cpu().float().numpy()
+    ref_acts = ref_acts[:, 0, :].detach().cpu().float().numpy()
 
     fd = rep_fd(gen_acts, ref_acts)
 

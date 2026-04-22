@@ -63,6 +63,10 @@ def sample(
     """
     model.scheduler.set_timesteps(num_timesteps)
     model.scheduler.timesteps = model.scheduler.timesteps.to(latents.device)
+    
+    _model_dtype = next(model.denoiser.parameters()).dtype
+    latents = latents.to(dtype=_model_dtype)
+
     for i, timestep in tqdm(enumerate(model.scheduler.timesteps), disable=not show_progress):
         timesteps = timestep.repeat(latents.shape[0], 1)
         noise_pred = model.denoiser(
@@ -89,6 +93,11 @@ def sample_on_manifold(
     """
     start_latents = latents.clone()
     model.scheduler.set_timesteps(num_timesteps)
+    
+    _model_dtype = next(model.denoiser.parameters()).dtype
+    latents = latents.to(dtype=_model_dtype)
+    start_latents = start_latents.to(dtype=_model_dtype)
+
     for i, timestep in tqdm(enumerate(model.scheduler.timesteps), disable=not show_progress):
         if start_timestep is not None and torch.is_tensor(start_timestep):
             # inject original latents until start_timestep
