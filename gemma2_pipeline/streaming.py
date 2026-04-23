@@ -153,11 +153,10 @@ def stream_train(args):
     )
     hidden_size = int(hf_model.config.hidden_size)
     
-    # 2. Setup GLP Trainer
     LOGGER.info("Setting up GLP denoiser")
     glp_model = setup_glp_model(hidden_size, args).to(device)
     total_steps = args.total_steps
-    use_muon = getattr(args, "use-muon", True)
+    use_muon = getattr(args, "use_muon", True)
     
     if use_muon:
         muon_params, adamw_params = [], []
