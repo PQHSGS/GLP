@@ -22,8 +22,10 @@ def fm_prepare(scheduler, model_input, noise, u=None, generator=None):
         batch_size = model_input.shape[0]
         u = torch.rand(size=(batch_size,), generator=generator)
     indices = (u * len(scheduler.timesteps)).long()
-    timesteps = scheduler.timesteps[indices]
-    sigmas = scheduler.sigmas[indices].flatten()
+    indices_ts = indices.to(scheduler.timesteps.device)
+    timesteps = scheduler.timesteps[indices_ts]
+    indices_sigmas = indices.to(scheduler.sigmas.device)
+    sigmas = scheduler.sigmas[indices_sigmas].flatten()
     timesteps = timesteps.to(model_input.device)
     sigmas = sigmas.to(model_input.device)
     timesteps = timesteps[:, None, None]
