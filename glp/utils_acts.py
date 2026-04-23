@@ -62,6 +62,14 @@ def save_acts(
             max_length=max_length
         )
         minibatch = {k: v.to(hf_model.device) for k, v in minibatch.items()}
+        # Ensure sequence length does not exceed model's max position embeddings (e.g. 1024 for GPT2)
+        max_positions = getattr(hf_model.config, "max_position_embeddings", max_length)
+        if minibatch["input_ids"].shape[1] > max_positions:
+            minibatch = {k: v[:, :max_positions] for k, v in minibatch.items()}
+            
+        # Ensure input_ids don't exceed vocab size
+        vocab_size = getattr(hf_model.config, "vocab_size", 50257)
+        minibatch["input_ids"] = minibatch["input_ids"].clamp(0, vocab_size - 1)
         with TraceDict(hf_model, **tracedict_config) as miniret:
             # Disable KV cache during activation extraction to reduce VRAM use.
             hf_model(**minibatch, use_cache=False)
