@@ -305,7 +305,7 @@ def stream_train(args):
                     second_moment_sum += np.square(vectors_np).sum(axis=0)
                     second_moment_count += vectors_np.shape[0]
 
-                if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:
+                if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:  
                     chunk_q = np.percentile(np.abs(vectors_np), quantile_percent, axis=0)
                     batch_count = vectors_np.shape[0]
                     if quantile_count == 0:
