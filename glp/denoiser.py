@@ -444,14 +444,13 @@ class GLP(nn.Module):
             loss_raw_hub = (delta ** 2) * (torch.sqrt(1.0 + (error / delta) ** 2) - 1.0)
             loss = (w * loss_raw_hub).mean()
 
-
-        # loss = ((weights * (pred - tgt)) ** 2).mean()
         # ===== proper metrics =====
 
         # relative squared error  
         pred = outputs.view(-1, outputs.shape[-1])
         tgt  = target.view(-1, target.shape[-1])
         tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
+        latent_norm = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1]).norm(dim=-1, keepdim=True) + 1e-6
         weights = 1.0 / tgt_norm
         tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
@@ -472,6 +471,7 @@ class GLP(nn.Module):
             timesteps=timesteps,
             loss=loss,
             tgt_norm=tgt_norm.mean(),
+            latent_norm=latent_norm.mean(),
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
