@@ -77,6 +77,10 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=train_defaults.use_bf16)
     parser.add_argument("--shuffle", action=argparse.BooleanOptionalAction, default=train_defaults.shuffle)
     
+    # Optional Training Features
+    parser.add_argument("--two-phase", action=argparse.BooleanOptionalAction, default=True, help="Enable 2-phase Flow Matching training.")
+    parser.add_argument("--muon", action=argparse.BooleanOptionalAction, default=True, help="Enable Hybrid Muon-AdamW optimizer.")
+
     parser.add_argument("--save-root", default=".")
     parser.add_argument("--run-name", default="glp-stream")
     parser.add_argument("--checkpoint-token-step", type=int, default=1000000, help="Save a checkpoint every N tokens")

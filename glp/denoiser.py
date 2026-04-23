@@ -388,6 +388,7 @@ class GLP(nn.Module):
         generator: torch.Generator | None = None,
         global_step: int | None = None,
         total_steps: int | None = None,
+        two_phase: bool = True,
         **kwargs
     ) -> SimpleNamespace:
         # prepare extra params
@@ -397,7 +398,7 @@ class GLP(nn.Module):
         u = torch.full((latents.shape[0],), u, device=latents.device) if isinstance(u, float) else u
 
         phase = 1
-        if global_step is not None and total_steps is not None:
+        if two_phase and global_step is not None and total_steps is not None:
             if global_step >= 0.4 * total_steps:
                 phase = 2
 
