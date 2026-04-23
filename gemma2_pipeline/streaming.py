@@ -127,7 +127,7 @@ def setup_glp_model(hidden_size, args):
             "multi_layer_n_layers": None,
         },
         tracedict_config={
-            "layer_prefix": "model.layers",
+            "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
             "layers": [args.layer],
             "retain": args.retain,
         }
@@ -250,7 +250,7 @@ def stream_train(args):
                     "multi_layer_n_layers": None,
                 },
                 "tracedict_config": {
-                    "layer_prefix": "model.layers",
+                    "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
                     "layers": [args.layer],
                     "retain": args.retain,
                 }
@@ -259,7 +259,7 @@ def stream_train(args):
         with open(save_dir / "config.yaml", "w") as f:
             yaml.dump(config_dict, f)
     
-    tracedict_config = build_tracedict_config(layer=args.layer, retain=args.retain)
+    tracedict_config = build_tracedict_config(layer=args.layer, retain=args.retain, layer_prefix=getattr(args, "layer_prefix", "model.layers"))
     use_autocast = bool(getattr(args, "use_bf16", True) and ("cuda" in str(device)))
 
     # Use a single streaming pass and update normalization stats cumulatively per chunk.

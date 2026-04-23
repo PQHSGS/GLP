@@ -26,6 +26,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     # Model & extraction args
     parser.add_argument("--model-name", default=collect_defaults.model_name)
     parser.add_argument("--layer", type=int, default=collect_defaults.layer)
+    parser.add_argument("--layer-prefix", type=str, default=collect_defaults.layer_prefix, help="Prefix for layers to extract.")
     parser.add_argument("--retain", choices=["input", "output"], default=train_defaults.retain)
     parser.add_argument("--max-length", type=int, default=collect_defaults.max_length)
     parser.add_argument("--token-idx", choices=["last", "all", "random_doc"], default=collect_defaults.token_idx)

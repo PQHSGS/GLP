@@ -32,9 +32,9 @@ def _init_writer(config: ActivationCollectionConfig, hidden_size: int) -> tuple[
     return writer, output_dir
 
 
-def build_tracedict_config(layer: int, retain: str = "output") -> dict:
+def build_tracedict_config(layer: int, retain: str = "output", layer_prefix: str = "model.layers") -> dict:
     return {
-        "layer_prefix": "model.layers",
+        "layer_prefix": layer_prefix,
         "layers": [layer],
         "retain": retain,
     }
@@ -115,7 +115,7 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
     writer, output_dir = _init_writer(config, hidden_size)
     stats = RunningMoments(hidden_size)
 
-    tracedict_config = build_tracedict_config(layer=config.layer, retain="output")
+    tracedict_config = build_tracedict_config(layer=config.layer, retain="output", layer_prefix=config.layer_prefix)
 
     documents_processed = 0
     vectors_written = 0

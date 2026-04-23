@@ -24,6 +24,7 @@ class ActivationCollectionConfig:
     model_name: str = "meta-llama/Llama-3.2-1B"
     output_dir: str = "data/llama1b-layer07-fineweb-localcollect-1M-all"
     layer: int = 7
+    layer_prefix: str = "model.layers"
     max_length: int = 2048
     token_idx: Literal["last", "all", "random_doc"] = "all"
     sample_seed: int = 0
@@ -62,6 +63,7 @@ class ModelTrainConfig:
     denoiser_layers: int = 3
     multi_layer_n_layers: Optional[int] = None
     layer: int = 7
+    layer_prefix: str = "model.layers"
     retain: str = "output"
     device: str = "auto"
     use_bf16: bool = True
