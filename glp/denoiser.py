@@ -386,6 +386,8 @@ class GLP(nn.Module):
         layer_idx: torch.LongTensor | int | None = None,  # (batch,) or scalar
         loss_kwargs: dict = {},
         generator: torch.Generator | None = None,
+        global_step: int | None = None,
+        total_steps: int | None = None,
         **kwargs
     ) -> SimpleNamespace:
         # prepare extra params
@@ -393,6 +395,19 @@ class GLP(nn.Module):
         self.normalizer.check_normalized(latents)
         self.scheduler.set_timesteps(self.scheduler.config.num_train_timesteps)
         u = torch.full((latents.shape[0],), u, device=latents.device) if isinstance(u, float) else u
+
+        phase = 1
+        if global_step is not None and total_steps is not None:
+            if global_step >= 0.4 * total_steps:
+                phase = 2
+
+        if phase == 1:
+            if u is None:
+                u_normal = torch.randn(latents.shape[0], device=latents.device, generator=generator)
+                u = torch.sigmoid(u_normal)
+        else:
+            if u is None:
+                u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
 
         # prepare flow matching inputs and target
         noise = torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(latents.device)
@@ -410,11 +425,23 @@ class GLP(nn.Module):
             layer_idx=layer_idx,
             **kwargs
         )
+        
+        outputs_f32 = outputs.float()
+        target_f32 = target.float()
+
         # compute loss
-        if self.normalizer.normalization_method == "log_norm":
-            loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs) * 1e5
+        if phase == 1:
+            if self.normalizer.normalization_method == "log_norm":
+                loss = torch.nn.functional.mse_loss(outputs_f32, target_f32, **loss_kwargs) * 1e5
+            else:
+                loss = torch.nn.functional.mse_loss(outputs_f32, target_f32, **loss_kwargs)
         else:
-            loss = torch.nn.functional.mse_loss(outputs, target, **loss_kwargs)
+            u_t = meta["u"].to(device=outputs.device, dtype=torch.float32).view(-1, 1, 1)
+            w = 1.0 / (1.0 - u_t + 1e-4)
+            error = outputs_f32 - target_f32
+            delta = 0.01
+            loss_raw_hub = (delta ** 2) * (torch.sqrt(1.0 + (error / delta) ** 2) - 1.0)
+            loss = (w * loss_raw_hub).mean()
 
 
         # loss = ((weights * (pred - tgt)) ** 2).mean()

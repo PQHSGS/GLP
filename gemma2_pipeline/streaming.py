@@ -29,6 +29,9 @@ from .settings import FineWebSourceConfig
 
 LOGGER = logging.getLogger(__name__)
 
+from torch.optim import Muon
+
+
 
 def canonicalize_normalization_method(method: str | None) -> str:
     method = "gaussian" if method is None else str(method)
@@ -154,19 +157,39 @@ def stream_train(args):
     # 2. Setup GLP Trainer
     LOGGER.info("Setting up GLP denoiser")
     glp_model = setup_glp_model(hidden_size, args).to(device)
-    optimizer = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
-    
-    from functools import partial
     total_steps = args.total_steps
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lr_lambda=partial(
-            cosine_scheduler_with_warmup,
-            warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_steps),
-            max_steps=total_steps,
-            initial_factor=getattr(args, "initial_factor", 0.01),
-            final_factor=getattr(args, "final_factor", 0.1),
-        )
+    muon_params = []
+    adamw_params = []
+    for name, p in glp_model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if "normalizer" in name:
+            continue
+        if p.ndim == 2:
+            muon_params.append(p)
+        else:
+            adamw_params.append(p)
+
+    opt_muon = Muon(muon_params, lr=0.02, momentum=0.95, ns_steps=6)
+    opt_adamw = torch.optim.AdamW(adamw_params, lr=1e-4, betas=(0.9, 0.95), weight_decay=1e-4)
+
+    from functools import partial
+    
+    lr_lambda = partial(
+        cosine_scheduler_with_warmup,
+        warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_steps),
+        max_steps=total_steps,
+        initial_factor=getattr(args, "initial_factor", 0.01),
+        final_factor=getattr(args, "final_factor", 0.01),
+    )
+
+    sched_muon = torch.optim.lr_scheduler.LambdaLR(
+        opt_muon,
+        lr_lambda=lr_lambda
+    )
+    sched_adamw = torch.optim.lr_scheduler.LambdaLR(
+        opt_adamw,
+        lr_lambda=lr_lambda
     )
 
     if args.wandb:
@@ -375,7 +398,7 @@ def stream_train(args):
             
             batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
             with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-                outputs = glp_model(**batch)
+                outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps)
                 loss = outputs.loss
                 tgt_norm = outputs.tgt_norm
                 loss_rel = outputs.loss_rel
@@ -387,9 +410,12 @@ def stream_train(args):
             max_grad_norm = grad_clip_threshold if grad_clip_threshold > 0.0 else float("inf")
             grad_norm = torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
             grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
-            optimizer.step()
-            optimizer.zero_grad()
-            scheduler.step()
+            opt_muon.step()
+            opt_adamw.step()
+            opt_muon.zero_grad()
+            opt_adamw.zero_grad()
+            sched_muon.step()
+            sched_adamw.step()
             
             global_step += 1
             pbar.update(1)
@@ -404,7 +430,8 @@ def stream_train(args):
                         "train/loss_raw": loss_raw.item(),
                         "train/target_norm": tgt_norm.item(),
                         "train/cos_sim": cos_sim.item(),
-                        "train/learning_rate": scheduler.get_last_lr()[0],
+                        "train/lr_muon": sched_muon.get_last_lr()[0],
+                        "train/lr_adamw": sched_adamw.get_last_lr()[0],
                         "train/grad_norm": grad_norm_value,
                     },
                     step=global_step,
