@@ -79,7 +79,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     
     # Optional Training Features
     parser.add_argument("--two-phase", action=argparse.BooleanOptionalAction, default=True, help="Enable 2-phase Flow Matching training.")
-    parser.add_argument("--muon", action=argparse.BooleanOptionalAction, default=True, help="Enable Hybrid Muon-AdamW optimizer.")
+    parser.add_argument("--use-muon", action=argparse.BooleanOptionalAction, default=True, help="Enable Hybrid Muon-AdamW optimizer.")
 
     parser.add_argument("--save-root", default=".")
     parser.add_argument("--run-name", default="glp-stream")

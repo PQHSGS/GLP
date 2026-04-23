@@ -29,7 +29,6 @@ from .settings import FineWebSourceConfig
 
 LOGGER = logging.getLogger(__name__)
 
-from torch.optim import Muon
 
 
 
@@ -158,7 +157,7 @@ def stream_train(args):
     LOGGER.info("Setting up GLP denoiser")
     glp_model = setup_glp_model(hidden_size, args).to(device)
     total_steps = args.total_steps
-    use_muon = getattr(args, "use_muon", True)
+    use_muon = getattr(args, "use-muon", True)
     
     if use_muon:
         muon_params, adamw_params = [], []
@@ -166,6 +165,8 @@ def stream_train(args):
             if not p.requires_grad or "normalizer" in name: continue
             if p.ndim == 2: muon_params.append(p)
             else: adamw_params.append(p)
+        
+        from torch.optim import Muon
         opt_muon = Muon(muon_params, lr=0.02, momentum=0.95, ns_steps=6)
         opt_adamw = torch.optim.AdamW(adamw_params, lr=1e-4, betas=(0.9, 0.95), weight_decay=1e-4)
     else:
@@ -391,7 +392,7 @@ def stream_train(args):
             
             batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
             with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-                outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps, use_2_phase=getattr(args, "use_2_phase", True))
+                outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
                 loss = outputs.loss
                 tgt_norm = outputs.tgt_norm
                 loss_rel = outputs.loss_rel
