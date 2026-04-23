@@ -192,9 +192,8 @@ def stream_train(args):
         wandb_run = None
 
     tmp_dir = Path("data/tmp_stream")
-    stats = RunningMoments(hidden_size) if use_gaussian_stats else None
+    stats = RunningMoments(hidden_size) if (use_gaussian_stats or use_quantile_stats) else None
     second_moment_sum = np.zeros(hidden_size, dtype=np.float64) if use_rmsnorm_stats else None
-    second_moment_count = 0
     quantile_scale = np.ones(hidden_size, dtype=np.float64) if use_quantile_stats else None
     quantile_count = 0
     fineweb = FineWebSourceConfig(
@@ -221,8 +220,15 @@ def stream_train(args):
     def save_glp_checkpoint(save_dir: Path):
         save_dir.mkdir(parents=True, exist_ok=True)
         glp_model.save_pretrained(path=save_dir, name="final")
-        if use_gaussian_stats and stats is not None:
-            save_rep_statistics(stats, save_dir / "rep_statistics.pt")
+        if use_stats:
+            torch.save(
+                {
+                    "mean": glp_model.normalizer.mean.cpu(),
+                    "var": glp_model.normalizer.var.cpu(),
+                    "normalization_method": normalization_method,
+                },
+                save_dir / "rep_statistics.pt",
+            )
         
         import yaml
         d_model = args.d_model_mult * hidden_size
@@ -298,15 +304,17 @@ def stream_train(args):
             if use_stats:
                 vectors_np = vectors.detach().float().cpu().numpy().astype(np.float64, copy=False)
 
-                if use_gaussian_stats and stats is not None:
+                if stats is not None:
                     stats.update(vectors_np)
 
                 if use_rmsnorm_stats and second_moment_sum is not None:
                     second_moment_sum += np.square(vectors_np).sum(axis=0)
                     second_moment_count += vectors_np.shape[0]
 
-                if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:  
-                    chunk_q = np.percentile(np.abs(vectors_np), quantile_percent, axis=0)
+                if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:
+                    # Center the vectors using the current running mean before quantile calculation
+                    centered_vectors = vectors_np - stats.mean
+                    chunk_q = np.percentile(np.abs(centered_vectors), quantile_percent, axis=0)
                     batch_count = vectors_np.shape[0]
                     if quantile_count == 0:
                         quantile_scale = chunk_q
@@ -332,49 +340,24 @@ def stream_train(args):
 
         if use_gaussian_stats and stats is not None:
             mean, var = stats.finalize()
-            # rep_statistics stores one scalar per hidden dimension across all seen samples.
-            if mean.ndim != 1 or var.ndim != 1 or mean.shape[0] != hidden_size or var.shape[0] != hidden_size:
-                raise RuntimeError(
-                    f"Expected 1D mean/var vectors of length {hidden_size}, got mean={mean.shape}, var={var.shape}"
-                )
             glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
             glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
-            LOGGER.info(
-                "Updated cumulative normalizer stats from %d vectors (latest chunk: %d).",
-                stats.count,
-                vectors_written,
-            )
+            LOGGER.info("Updated cumulative gaussian stats from %d vectors.", stats.count)
+            
         elif use_rmsnorm_stats and second_moment_sum is not None:
-            if second_moment_count <= 0:
-                raise RuntimeError("No samples observed for rmsnorm statistics.")
-
-            rms_sq = second_moment_sum / second_moment_count
-            rms_sq = np.maximum(rms_sq, 1e-8)
+            rms_sq = np.maximum(second_moment_sum / max(second_moment_count, 1), 1e-8)
             glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=device)
             glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=device)
-            LOGGER.info(
-                "Updated cumulative rmsnorm stats from %d vectors (latest chunk: %d).",
-                second_moment_count,
-                vectors_written,
-            )
+            LOGGER.info("Updated cumulative rmsnorm stats from %d vectors.", second_moment_count)
+            
         elif use_quantile_stats and quantile_scale is not None:
-            if quantile_count <= 0:
-                raise RuntimeError("No samples observed for quantile normalization statistics.")
-
             scale = np.maximum(quantile_scale, 1e-6)
-            glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=device)
+            glp_model.normalizer.mean = torch.tensor(stats.mean, dtype=torch.float32, device=device)
             glp_model.normalizer.var = torch.tensor(scale * scale, dtype=torch.float32, device=device)
-            LOGGER.info(
-                "Updated cumulative quantile-%s stats from %d vectors (latest chunk: %d).",
-                format_quantile_percent(quantile_percent or 99.0),
-                quantile_count,
-                vectors_written,
-            )
+            LOGGER.info("Updated cumulative quantile-%s stats from %d vectors.", format_quantile_percent(quantile_percent), quantile_count)
+            
         else:
-            LOGGER.info(
-                "Using normalization_method=%s; skipped cumulative mean/var update.",
-                normalization_method,
-            )
+            LOGGER.info("Using normalization_method=%s; skipped cumulative stat updates.", normalization_method)
         
         
         train_dataset = load_activation_dataset(str(tmp_dir))

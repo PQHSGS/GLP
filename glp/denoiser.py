@@ -119,9 +119,9 @@ class Normalizer(nn.Module):
         var = torch.clamp(var, min=1e-8)
         scale = torch.sqrt(var)
 
-        if self.normalization_method == "gaussian":
+        if self.normalization_method == "gaussian" or self.normalization_method.startswith("quantile_"):
             return (rep.to(mean.device) - mean) / scale
-        if self.normalization_method == "rmsnorm" or self.normalization_method.startswith("quantile_"):
+        if self.normalization_method == "rmsnorm":
             return rep.to(scale.device) / scale
 
         raise ValueError(f"Unsupported normalization_method '{self.normalization_method}'")
@@ -136,9 +136,9 @@ class Normalizer(nn.Module):
         var = torch.clamp(var, min=1e-8)
         scale = torch.sqrt(var)
 
-        if self.normalization_method == "gaussian":
+        if self.normalization_method == "gaussian" or self.normalization_method.startswith("quantile_"):
             return rep.to(var.device) * scale + mean
-        if self.normalization_method == "rmsnorm" or self.normalization_method.startswith("quantile_"):
+        if self.normalization_method == "rmsnorm":
             return rep.to(scale.device) * scale
 
         raise ValueError(f"Unsupported normalization_method '{self.normalization_method}'")
