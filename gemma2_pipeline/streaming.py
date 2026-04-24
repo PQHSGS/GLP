@@ -166,8 +166,8 @@ def stream_train(args):
             else: adamw_params.append(p)
         
         from torch.optim import Muon
-        opt_muon = Muon(muon_params, lr=0.02, momentum=0.95, ns_steps=6)
-        opt_adamw = torch.optim.AdamW(adamw_params, lr=1e-4, betas=(0.9, 0.95), weight_decay=1e-4)
+        opt_muon = Muon(muon_params, lr=0.03, momentum=0.95, ns_steps=6)
+        opt_adamw = torch.optim.AdamW(adamw_params, lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=1e-4)
     else:
         opt_muon = None
         opt_adamw = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
