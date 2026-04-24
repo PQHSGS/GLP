@@ -155,7 +155,6 @@ class Normalizer(nn.Module):
         ref_mean = torch.zeros(rep.shape[-1], device=rep.device, dtype=rep.dtype)
         ref_var = torch.ones(rep.shape[-1], device=rep.device, dtype=rep.dtype)
         is_normalized = torch.isclose(rep_mean, ref_mean, atol=atol).all() and torch.isclose(rep_var, ref_var, atol=atol).all()
-        print(f"Normalizer stats")
         if not is_normalized:
             print(
                 f"WARNING: Latents may not be normalized "
@@ -486,21 +485,18 @@ class GLP(nn.Module):
             with torch.no_grad():
                 # --- Timestep Loss Mask ---
                 # Calculate raw loss per batch item
-                loss_raw_batch = torch.nn.functional.mse_loss(pred_raw, tgt_raw, reduction='none').view(latents.shape[0], -1).mean(dim=-1)
-                u_flat = meta["u"].view(-1).to(device=pred_raw.device)
+                u_flat = meta["u"].view(-1).to(device=pred.device)
                 
                 mask_early = u_flat < 0.3
                 mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
                 mask_late = u_flat > 0.7
                 
-                loss_early = loss_raw_batch[mask_early].mean().item() if mask_early.any() else 0.0
-                loss_mid = loss_raw_batch[mask_mid].mean().item() if mask_mid.any() else 0.0
-                loss_late = loss_raw_batch[mask_late].mean().item() if mask_late.any() else 0.0
+                loss_early = loss[mask_early].mean().item() if mask_early.any() else 0.0
+                loss_mid = loss[mask_mid].mean().item() if mask_mid.any() else 0.0
+                loss_late = loss[mask_late].mean().item() if mask_late.any() else 0.0
 
                 # --- Manifold Spectral Measurements ---
                 X = latents.view(-1, latents.shape[-1]).float()
-                if X.shape[0] > 2048:
-                    X = X[:2048]
                 
                 X_centered = X - X.mean(dim=0)
                 s = torch.linalg.svdvals(X_centered)

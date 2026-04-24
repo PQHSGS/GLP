@@ -375,7 +375,7 @@ def stream_train(args):
             batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
             
             # --- GRADIENT DIAGNOSTICS ---
-            # Run every 50 steps to avoid massive overhead
+            # Run every 5 steps to avoid massive overhead
             calc_grad_coherence = False
             if (global_step + 1) % 5 == 0:
                 calc_grad_coherence = True
