@@ -475,7 +475,7 @@ class GLP(nn.Module):
         elif (global_step + 1) % 10 == 0:
             calc_svd = True
 
-        PR, H_SVD, kappa = 0.0, 0.0, 0.0
+        PR, H_SVD, kappa, k_99 = 0.0, 0.0, 0.0, 0.0
         if calc_svd:
             with torch.no_grad():
                 X = latents.view(-1, latents.shape[-1]).float()
@@ -499,11 +499,11 @@ class GLP(nn.Module):
                 p = lambdas / (sum_lambdas + 1e-9)
                 H_SVD = -torch.sum(p * torch.log(p + 1e-9))
                 
-                # 3. Truncated Condition Number (kappa_rel)
+                # 3. Truncated Condition Number (kappa)
                 # Instead of dividing by the 'dead' minimum, compare to the 64th or 128th dim
                 # This measures the 'steepness' of the needle's core.
                 ref_idx = min(63, len(s) - 1)
-                kappa_rel = s[0] / (s[ref_idx] + 1e-9)
+                kappa = s[0] / (s[ref_idx] + 1e-9)
                 
                 # 4. Dimension for 99% Variance (k_99)
                 # The 'Hard Count' version of PR. 
@@ -522,7 +522,7 @@ class GLP(nn.Module):
             cos_sim=cos_sim,
             PR=PR,
             H_SVD=H_SVD,
-            kappa=kappa_rel,
+            kappa=kappa,
             k_99=k_99,
         )
 
