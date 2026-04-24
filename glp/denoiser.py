@@ -467,6 +467,42 @@ class GLP(nn.Module):
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
 
+        # --- Manifold Spectral Measurements ---
+        # Measure every 10 steps to optimize time overhead
+        calc_svd = False
+        if global_step is None:
+            calc_svd = True
+        elif (global_step + 1) % 10 == 0:
+            calc_svd = True
+
+        PR, H_SVD, kappa = 0.0, 0.0, 0.0
+        if calc_svd:
+            with torch.no_grad():
+                # use normalized latents (the data manifold)
+                X = latents.view(-1, latents.shape[-1]).float()
+                # subsample to max 2048 to keep complexity low O(B * D^2)
+                if X.shape[0] > 2048:
+                    X = X[:2048]
+                
+                # 1. Center the batch
+                X_centered = X - X.mean(dim=0)
+                
+                # 2. Compute Singular Values (s)
+                s = torch.linalg.svdvals(X_centered)
+                epsilon = 1e-9
+                
+                # 3. Participation Ratio (PR)
+                lambdas = s ** 2
+                sum_lambdas = lambdas.sum()
+                PR = (sum_lambdas ** 2) / (lambdas ** 2).sum()
+                
+                # 4. Spectral Entropy (H_SVD)
+                p = lambdas / (sum_lambdas + epsilon)
+                H_SVD = -torch.sum(p * torch.log(p + epsilon))
+                
+                # 5. Condition Number (kappa)
+                kappa = s.max() / (s.min() + epsilon)
+
         return SimpleNamespace(
             latents=outputs,
             timesteps=timesteps,
@@ -477,6 +513,9 @@ class GLP(nn.Module):
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
+            PR=PR,
+            H_SVD=H_SVD,
+            kappa=kappa,
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):

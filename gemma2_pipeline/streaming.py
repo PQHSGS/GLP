@@ -413,6 +413,12 @@ def stream_train(args):
                     "train/cos_sim": cos_sim.item(),
                     "train/grad_norm": grad_norm_value,
                 }
+                
+                if outputs.PR != 0.0:
+                    log_dict["train/PR"] = outputs.PR.item() if hasattr(outputs.PR, 'item') else outputs.PR
+                    log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD
+                    log_dict["train/kappa"] = outputs.kappa.item() if hasattr(outputs.kappa, 'item') else outputs.kappa
+
                 if opt_muon:
                     log_dict["train/lr_muon"] = sched_muon.get_last_lr()[0]
                 log_dict["train/lr_adamw"] = sched_adamw.get_last_lr()[0]
