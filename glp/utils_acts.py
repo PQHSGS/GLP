@@ -144,9 +144,21 @@ class MemmapWriter:
     def flush(self):
         for memmap_file in self.memmap_files:
             memmap_file.flush()
+            try:
+                fd = os.open(memmap_file.filename, os.O_RDWR)
+                os.fsync(fd)
+                os.close(fd)
+            except Exception as e:
+                logger.warning(f"Failed to fsync {memmap_file.filename}: {e}")
             logger.info(f'Finished writing to {memmap_file.filename}')
         indices_path = self.output_dir / 'data_indices.npy'
         np.save(indices_path, np.array(self.indices, dtype=np.uint64))
+        try:
+            fd = os.open(indices_path, os.O_RDWR)
+            os.fsync(fd)
+            os.close(fd)
+        except Exception as e:
+            logger.warning(f"Failed to fsync {indices_path}: {e}")
         logger.info(f'Saved indices to {indices_path}')
 
 @dataclass()

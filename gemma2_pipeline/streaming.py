@@ -191,7 +191,7 @@ def stream_train(args):
     else:
         wandb_run = None
 
-    tmp_dir = Path("data/tmp_stream")
+    tmp_dir = Path(f"data/tmp_stream_{args.run_name}")
     stats = RunningMoments(hidden_size) if (use_gaussian_stats or use_quantile_stats) else None
     second_moment_sum = np.zeros(hidden_size, dtype=np.float64) if use_rmsnorm_stats else None
     quantile_scale = np.ones(hidden_size, dtype=np.float64) if use_quantile_stats else None
@@ -469,6 +469,10 @@ def stream_train(args):
                     "train/grad_norm": grad_norm_value,
                     "train/pre_l2_std": outputs.pre_l2_std,
                     "train/post_l2_std": outputs.post_l2_std,
+                    "train/batch_mean": getattr(outputs, "batch_mean", 0.0),
+                    "train/batch_var": getattr(outputs, "batch_var", 0.0),
+                    "train/global_mean": getattr(outputs, "global_mean", 0.0),
+                    "train/global_var": getattr(outputs, "global_var", 0.0),
                 }
                 
                 if outputs.PR != 0.0:

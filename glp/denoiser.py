@@ -155,6 +155,7 @@ class Normalizer(nn.Module):
         ref_mean = torch.zeros(rep.shape[-1], device=rep.device, dtype=rep.dtype)
         ref_var = torch.ones(rep.shape[-1], device=rep.device, dtype=rep.dtype)
         is_normalized = torch.isclose(rep_mean, ref_mean, atol=atol).all() and torch.isclose(rep_var, ref_var, atol=atol).all()
+        print(f"Normalizer stats")
         if not is_normalized:
             print(
                 f"WARNING: Latents may not be normalized "
@@ -486,11 +487,11 @@ class GLP(nn.Module):
                 # --- Timestep Loss Mask ---
                 # Calculate raw loss per batch item
                 loss_raw_batch = torch.nn.functional.mse_loss(pred_raw, tgt_raw, reduction='none').view(latents.shape[0], -1).mean(dim=-1)
-                t_flat = timesteps.view(-1)
+                u_flat = meta["u"].view(-1).to(device=pred_raw.device)
                 
-                mask_early = t_flat < 0.3
-                mask_mid = (t_flat >= 0.3) & (t_flat <= 0.7)
-                mask_late = t_flat > 0.7
+                mask_early = u_flat < 0.3
+                mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
+                mask_late = u_flat > 0.7
                 
                 loss_early = loss_raw_batch[mask_early].mean().item() if mask_early.any() else 0.0
                 loss_mid = loss_raw_batch[mask_mid].mean().item() if mask_mid.any() else 0.0
@@ -542,6 +543,18 @@ class GLP(nn.Module):
                 hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
                 hoyer_sparsity = hoyer.mean()
 
+        # --- Normalizer Stats ---
+        batch_mean = latents.mean().item()
+        batch_var = latents.var().item()
+        
+        global_mean = 0.0
+        if hasattr(self.normalizer, "mean") and torch.is_tensor(self.normalizer.mean):
+            global_mean = self.normalizer.mean.mean().item()
+            
+        global_var = 1.0
+        if hasattr(self.normalizer, "var") and torch.is_tensor(self.normalizer.var):
+            global_var = self.normalizer.var.mean().item()
+
         return SimpleNamespace(
             latents=outputs,
             timesteps=timesteps,
@@ -565,6 +578,10 @@ class GLP(nn.Module):
             loss_early=loss_early,
             loss_mid=loss_mid,
             loss_late=loss_late,
+            batch_mean=batch_mean,
+            batch_var=batch_var,
+            global_mean=global_mean,
+            global_var=global_var,
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):
