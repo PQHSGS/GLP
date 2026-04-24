@@ -414,9 +414,10 @@ def stream_train(args):
                     "train/latent_post_l2": latent_post_l2.item(),
                     "train/latent_pre_l1": latent_pre_l1.item(),
                     "train/latent_post_l1": latent_post_l1.item(),
-                    
                     "train/cos_sim": cos_sim.item(),
                     "train/grad_norm": grad_norm_value,
+                    "train/pre_l2_std": outputs.pre_l2_std,
+                    "train/post_l2_std": outputs.post_l2_std,
                 }
                 
                 if outputs.PR != 0.0:

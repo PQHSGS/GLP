@@ -1,2 +1,0 @@
-gemma2_pipeline
-glp

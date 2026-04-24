@@ -453,6 +453,8 @@ class GLP(nn.Module):
         tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
         latent_pre_l2 = raw_latents.norm(dim=-1, keepdim=True) + 1e-6
         latent_post_l2 = latents.norm(dim=-1, keepdim=True) + 1e-6
+        pre_l2_std = latent_pre_l2.std().item()
+        post_l2_std = latent_post_l2.std().item()
         latent_pre_l1 = raw_latents.norm(dim=-1, keepdim=True, p=1) + 1e-6
         latent_post_l1 = latents.norm(dim=-1, keepdim=True, p=1) + 1e-6
         weights = 1.0 / tgt_norm
@@ -546,6 +548,8 @@ class GLP(nn.Module):
             tgt_norm=tgt_norm.mean(),
             latent_pre_l2=latent_pre_l2.mean(),
             latent_post_l2=latent_post_l2.mean(),
+            pre_l2_std=pre_l2_std,
+            post_l2_std=post_l2_std,
             latent_pre_l1=latent_pre_l1.mean(),
             latent_post_l1=latent_post_l1.mean(),
             loss_rel=loss_rel,
