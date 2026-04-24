@@ -397,10 +397,10 @@ class GLP(nn.Module):
         self.scheduler.set_timesteps(self.scheduler.config.num_train_timesteps)
         u = torch.full((latents.shape[0],), u, device=latents.device) if isinstance(u, float) else u
 
-        phase = 1
+        phase = 2
         if two_phase and global_step is not None and total_steps is not None:
-            if global_step >= 0.4 * total_steps:
-                phase = 2
+            if global_step <= 0.4 * total_steps:
+                phase = 1
 
         if phase == 1:
             if u is None:
