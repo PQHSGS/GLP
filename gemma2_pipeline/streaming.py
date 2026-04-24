@@ -377,7 +377,8 @@ def stream_train(args):
                 outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
                 loss = outputs.loss
                 tgt_norm = outputs.tgt_norm
-                latent_norm = outputs.latent_norm
+                latent_pre_norm = outputs.latent_pre_norm
+                latent_post_norm = outputs.latent_post_norm
                 loss_rel = outputs.loss_rel
                 loss_raw = outputs.loss_raw
                 cos_sim = outputs.cos_sim
@@ -407,7 +408,8 @@ def stream_train(args):
                     "train/loss_rel": loss_rel.item(),
                     "train/loss_raw": loss_raw.item(),
                     "train/target_norm": tgt_norm.item(),
-                    "train/latent_norm": latent_norm.item(),
+                    "train/latent_pre_norm": latent_pre_norm.item(),
+                    "train/latent_post_norm": latent_post_norm.item(),
                     "train/cos_sim": cos_sim.item(),
                     "train/grad_norm": grad_norm_value,
                 }
