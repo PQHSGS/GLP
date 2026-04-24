@@ -373,6 +373,57 @@ def stream_train(args):
             if global_step >= total_steps: break
             
             batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
+            
+            # --- GRADIENT DIAGNOSTICS ---
+            # Run every 50 steps to avoid massive overhead
+            calc_grad_coherence = False
+            if (global_step + 1) % 5 == 0:
+                calc_grad_coherence = True
+
+            diag_grad_cos_sim, diag_grad_norm, diag_grad_hoyer = 0.0, 0.0, 0.0
+            
+            if calc_grad_coherence:
+                if opt_muon: opt_muon.zero_grad()
+                opt_adamw.zero_grad()
+                
+                half_size = batch['latents'].shape[0] // 2
+                
+                # Split batch
+                batch_1 = {k: (v[:half_size] if v is not None else None) for k, v in batch.items()}
+                batch_2 = {k: (v[half_size:] if v is not None else None) for k, v in batch.items()}
+                
+                # Target a central layer in GLP
+                target_layer = glp_model.denoiser.model.layers[0].up_proj.weight
+                D_grad = target_layer.numel()
+                
+                # Backward Pass 1
+                with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
+                    out_1 = glp_model(**batch_1, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
+                grad_1 = torch.autograd.grad(out_1.loss, target_layer)[0]
+                
+                # Backward Pass 2
+                with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
+                    out_2 = glp_model(**batch_2, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
+                grad_2 = torch.autograd.grad(out_2.loss, target_layer)[0]
+                
+                with torch.no_grad():
+                    g1_flat = grad_1.view(-1)
+                    g2_flat = grad_2.view(-1)
+                    
+                    diag_grad_cos_sim = torch.nn.functional.cosine_similarity(g1_flat, g2_flat, dim=0).item()
+                    full_grad = (g1_flat + g2_flat) / 2.0
+                    diag_grad_norm = full_grad.norm(p=2).item()
+                    
+                    import math
+                    l1_norm = full_grad.abs().sum()
+                    l2_norm = diag_grad_norm
+                    sqrt_d = math.sqrt(D_grad)
+                    hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
+                    diag_grad_hoyer = hoyer.item()
+                
+                if opt_muon: opt_muon.zero_grad()
+                opt_adamw.zero_grad()
+
             with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
                 outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
                 loss = outputs.loss
@@ -428,6 +479,15 @@ def stream_train(args):
                     if hasattr(outputs, 'dead_ratio') and outputs.dead_ratio != 0.0:
                         log_dict["train/dead_ratio"] = outputs.dead_ratio.item() if hasattr(outputs.dead_ratio, 'item') else outputs.dead_ratio
                         log_dict["train/hoyer_sparsity"] = outputs.hoyer_sparsity.item() if hasattr(outputs.hoyer_sparsity, 'item') else outputs.hoyer_sparsity
+                    if hasattr(outputs, 'loss_early'):
+                        log_dict["train/loss_early"] = outputs.loss_early
+                        log_dict["train/loss_mid"] = outputs.loss_mid
+                        log_dict["train/loss_late"] = outputs.loss_late
+                        
+                if diag_grad_cos_sim != 0.0:
+                    log_dict["train/diag_grad_cos_sim"] = diag_grad_cos_sim
+                    log_dict["train/diag_grad_norm"] = diag_grad_norm
+                    log_dict["train/diag_grad_hoyer"] = diag_grad_hoyer
 
                 if opt_muon:
                     log_dict["train/lr_muon"] = sched_muon.get_last_lr()[0]

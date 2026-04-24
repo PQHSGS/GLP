@@ -472,17 +472,31 @@ class GLP(nn.Module):
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
 
-        # --- Manifold Spectral Measurements ---
-        # Measure every 10 steps to optimize time overhead
-        calc_svd = False
-        if global_step is None:
-            calc_svd = True
-        elif (global_step + 1) % 10 == 0:
-            calc_svd = True
+        # --- Diagnostic Metrics (every 5 steps) ---
+        calc_metrics = False
+        if global_step is None or (global_step + 1) % 5 == 0:
+            calc_metrics = True
 
         PR, H_SVD, kappa, k_99 = 0.0, 0.0, 0.0, 0.0
-        if calc_svd:
+        dead_ratio, hoyer_sparsity = 0.0, 0.0
+        loss_early, loss_mid, loss_late = 0.0, 0.0, 0.0
+        
+        if calc_metrics:
             with torch.no_grad():
+                # --- Timestep Loss Mask ---
+                # Calculate raw loss per batch item
+                loss_raw_batch = torch.nn.functional.mse_loss(pred_raw, tgt_raw, reduction='none').view(latents.shape[0], -1).mean(dim=-1)
+                t_flat = timesteps.view(-1)
+                
+                mask_early = t_flat < 0.3
+                mask_mid = (t_flat >= 0.3) & (t_flat <= 0.7)
+                mask_late = t_flat > 0.7
+                
+                loss_early = loss_raw_batch[mask_early].mean().item() if mask_early.any() else 0.0
+                loss_mid = loss_raw_batch[mask_mid].mean().item() if mask_mid.any() else 0.0
+                loss_late = loss_raw_batch[mask_late].mean().item() if mask_late.any() else 0.0
+
+                # --- Manifold Spectral Measurements ---
                 X = latents.view(-1, latents.shape[-1]).float()
                 if X.shape[0] > 2048:
                     X = X[:2048]
@@ -490,41 +504,28 @@ class GLP(nn.Module):
                 X_centered = X - X.mean(dim=0)
                 s = torch.linalg.svdvals(X_centered)
                 
-                # --- NEW: Robust Noise Floor Handling ---
-                # Anything 1e-6 times smaller than max is numerical noise in FP32
+                # Robust Noise Floor Handling
                 s_max = s[0]
                 s_clean = s[s > (s_max * 1e-6)] 
                 lambdas = s_clean ** 2
                 sum_lambdas = lambdas.sum()
                 
-                # 1. Participation Ratio (PR) - Uses the clean signal only
+                # 1. Participation Ratio (PR)
                 PR = (sum_lambdas ** 2) / (lambdas ** 2).sum()
                 
-                # 2. Spectral Entropy (H_SVD) - Stabilized
+                # 2. Spectral Entropy (H_SVD)
                 p = lambdas / (sum_lambdas + 1e-9)
                 H_SVD = -torch.sum(p * torch.log(p + 1e-9))
                 
                 # 3. Truncated Condition Number (kappa)
-                # Instead of dividing by the 'dead' minimum, compare to the 64th or 128th dim
-                # This measures the 'steepness' of the needle's core.
                 ref_idx = min(63, len(s) - 1)
                 kappa = s[0] / (s[ref_idx] + 1e-9)
                 
                 # 4. Dimension for 99% Variance (k_99)
-                # The 'Hard Count' version of PR. 
                 cum_var = torch.cumsum(lambdas, dim=0) / sum_lambdas
                 k_99 = (cum_var < 0.99).sum().float()
 
-        # --- Polysemantic/Sparsity Measurements ---
-        calc_sparsity = False
-        if global_step is None:
-            calc_sparsity = True
-        elif (global_step + 1) % 10 == 0:
-            calc_sparsity = True
-
-        dead_ratio, hoyer_sparsity = 0.0, 0.0
-        if calc_sparsity:
-            with torch.no_grad():
+                # --- Polysemantic/Sparsity Measurements ---
                 X_raw = raw_latents.float()
                 D = X_raw.shape[-1]
                 
@@ -561,6 +562,9 @@ class GLP(nn.Module):
             k_99=k_99,
             dead_ratio=dead_ratio,
             hoyer_sparsity=hoyer_sparsity,
+            loss_early=loss_early,
+            loss_mid=loss_mid,
+            loss_late=loss_late,
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):
