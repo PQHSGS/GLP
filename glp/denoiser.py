@@ -432,17 +432,18 @@ class GLP(nn.Module):
 
         # compute loss
         if phase == 1:
+            loss_unreduced = torch.nn.functional.mse_loss(outputs_f32, target_f32, reduction='none').view(latents.shape[0], -1).mean(dim=-1)
             if self.normalizer.normalization_method == "log_norm":
-                loss = torch.nn.functional.mse_loss(outputs_f32, target_f32, **loss_kwargs) * 1e5
-            else:
-                loss = torch.nn.functional.mse_loss(outputs_f32, target_f32, **loss_kwargs)
+                loss_unreduced = loss_unreduced * 1e5
+            loss = loss_unreduced.mean()
         else:
             u_t = meta["u"].to(device=outputs.device, dtype=torch.float32).view(-1, 1, 1)
             w = 1.0 / (1.0 - u_t + 1e-4)
             error = outputs_f32 - target_f32
             delta = 0.01
             loss_raw_hub = (delta ** 2) * (torch.sqrt(1.0 + (error / delta) ** 2) - 1.0)
-            loss = (w * loss_raw_hub).mean()
+            loss_unreduced = (w * loss_raw_hub).view(latents.shape[0], -1).mean(dim=-1)
+            loss = loss_unreduced.mean()
 
         # ===== proper metrics =====
         raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1])
@@ -491,9 +492,9 @@ class GLP(nn.Module):
                 mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
                 mask_late = u_flat > 0.7
                 
-                loss_early = loss[mask_early].mean().item() if mask_early.any() else 0.0
-                loss_mid = loss[mask_mid].mean().item() if mask_mid.any() else 0.0
-                loss_late = loss[mask_late].mean().item() if mask_late.any() else 0.0
+                loss_early = loss_unreduced[mask_early].mean().item() if mask_early.any() else 0.0
+                loss_mid = loss_unreduced[mask_mid].mean().item() if mask_mid.any() else 0.0
+                loss_late = loss_unreduced[mask_late].mean().item() if mask_late.any() else 0.0
 
                 # --- Manifold Spectral Measurements ---
                 X = latents.view(-1, latents.shape[-1]).float()
