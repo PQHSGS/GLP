@@ -450,7 +450,8 @@ class GLP(nn.Module):
         pred = outputs.view(-1, outputs.shape[-1])
         tgt  = target.view(-1, target.shape[-1])
         tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
-        latent_norm = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1]).norm(dim=-1, keepdim=True) + 1e-6
+        latent_pre_norm = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1]).norm(dim=-1, keepdim=True) + 1e-6
+        latent_post_norm = latents.norm(dim=-1, keepdim=True) + 1e-6
         weights = 1.0 / tgt_norm
         tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
@@ -471,7 +472,8 @@ class GLP(nn.Module):
             timesteps=timesteps,
             loss=loss,
             tgt_norm=tgt_norm.mean(),
-            latent_norm=latent_norm.mean(),
+            latent_pre_norm=latent_pre_norm.mean(),
+            latent_post_norm=latent_post_norm.mean(),
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
