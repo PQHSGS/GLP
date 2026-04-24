@@ -445,13 +445,16 @@ class GLP(nn.Module):
             loss = (w * loss_raw_hub).mean()
 
         # ===== proper metrics =====
+        raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1])
 
         # relative squared error  
         pred = outputs.view(-1, outputs.shape[-1])
         tgt  = target.view(-1, target.shape[-1])
         tgt_norm = tgt.norm(dim=-1, keepdim=True) + 1e-6
-        latent_pre_norm = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1]).norm(dim=-1, keepdim=True) + 1e-6
-        latent_post_norm = latents.norm(dim=-1, keepdim=True) + 1e-6
+        latent_pre_l2 = raw_latents.norm(dim=-1, keepdim=True) + 1e-6
+        latent_post_l2 = latents.norm(dim=-1, keepdim=True) + 1e-6
+        latent_pre_l1 = raw_latents.norm(dim=-1, keepdim=True, p=1) + 1e-6
+        latent_post_l1 = latents.norm(dim=-1, keepdim=True, p=1) + 1e-6
         weights = 1.0 / tgt_norm
         tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
@@ -510,13 +513,41 @@ class GLP(nn.Module):
                 cum_var = torch.cumsum(lambdas, dim=0) / sum_lambdas
                 k_99 = (cum_var < 0.99).sum().float()
 
+        # --- Polysemantic/Sparsity Measurements ---
+        calc_sparsity = False
+        if global_step is None:
+            calc_sparsity = True
+        elif (global_step + 1) % 10 == 0:
+            calc_sparsity = True
+
+        dead_ratio, hoyer_sparsity = 0.0, 0.0
+        if calc_sparsity:
+            with torch.no_grad():
+                X_raw = raw_latents.float()
+                D = X_raw.shape[-1]
+                
+                # 1. Dead Ratio (What % is functionally zero?)
+                is_active = (X_raw.abs() > 1e-3).float()
+                active_ratio = is_active.mean()
+                dead_ratio = 1.0 - active_ratio
+                
+                # 2. Hoyer Sparsity (Scale-Invariant Concentration)
+                l1_norm = X_raw.abs().sum(dim=-1)
+                l2_norm = torch.linalg.vector_norm(X_raw, dim=-1)
+                
+                sqrt_d = math.sqrt(D)
+                hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
+                hoyer_sparsity = hoyer.mean()
+
         return SimpleNamespace(
             latents=outputs,
             timesteps=timesteps,
             loss=loss,
             tgt_norm=tgt_norm.mean(),
-            latent_pre_norm=latent_pre_norm.mean(),
-            latent_post_norm=latent_post_norm.mean(),
+            latent_pre_l2=latent_pre_l2.mean(),
+            latent_post_l2=latent_post_l2.mean(),
+            latent_pre_l1=latent_pre_l1.mean(),
+            latent_post_l1=latent_post_l1.mean(),
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
@@ -524,6 +555,8 @@ class GLP(nn.Module):
             H_SVD=H_SVD,
             kappa=kappa,
             k_99=k_99,
+            dead_ratio=dead_ratio,
+            hoyer_sparsity=hoyer_sparsity,
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):

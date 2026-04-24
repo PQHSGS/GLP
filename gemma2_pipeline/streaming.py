@@ -377,8 +377,10 @@ def stream_train(args):
                 outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
                 loss = outputs.loss
                 tgt_norm = outputs.tgt_norm
-                latent_pre_norm = outputs.latent_pre_norm
-                latent_post_norm = outputs.latent_post_norm
+                latent_pre_l2 = outputs.latent_pre_l2
+                latent_post_l2 = outputs.latent_post_l2
+                latent_pre_l1 = outputs.latent_pre_l1
+                latent_post_l1 = outputs.latent_post_l1
                 loss_rel = outputs.loss_rel
                 loss_raw = outputs.loss_raw
                 cos_sim = outputs.cos_sim
@@ -408,8 +410,11 @@ def stream_train(args):
                     "train/loss_rel": loss_rel.item(),
                     "train/loss_raw": loss_raw.item(),
                     "train/target_norm": tgt_norm.item(),
-                    "train/latent_pre_norm": latent_pre_norm.item(),
-                    "train/latent_post_norm": latent_post_norm.item(),
+                    "train/latent_pre_l2": latent_pre_l2.item(),
+                    "train/latent_post_l2": latent_post_l2.item(),
+                    "train/latent_pre_l1": latent_pre_l1.item(),
+                    "train/latent_post_l1": latent_post_l1.item(),
+                    
                     "train/cos_sim": cos_sim.item(),
                     "train/grad_norm": grad_norm_value,
                 }
@@ -419,6 +424,9 @@ def stream_train(args):
                     log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD
                     log_dict["train/kappa"] = outputs.kappa.item() if hasattr(outputs.kappa, 'item') else outputs.kappa
                     log_dict["train/k_99"] = outputs.k_99.item() if hasattr(outputs.k_99, 'item') else outputs.k_99
+                    if hasattr(outputs, 'dead_ratio') and outputs.dead_ratio != 0.0:
+                        log_dict["train/dead_ratio"] = outputs.dead_ratio.item() if hasattr(outputs.dead_ratio, 'item') else outputs.dead_ratio
+                        log_dict["train/hoyer_sparsity"] = outputs.hoyer_sparsity.item() if hasattr(outputs.hoyer_sparsity, 'item') else outputs.hoyer_sparsity
 
                 if opt_muon:
                     log_dict["train/lr_muon"] = sched_muon.get_last_lr()[0]
