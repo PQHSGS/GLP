@@ -417,7 +417,7 @@ def stream_train(args):
                 if outputs.PR != 0.0:
                     log_dict["train/PR"] = outputs.PR.item() if hasattr(outputs.PR, 'item') else outputs.PR
                     log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD
-                    log_dict["train/kappa"] = outputs.kappa_rel.item() if hasattr(outputs.kappa_rel, 'item') else outputs.kappa_rel
+                    log_dict["train/kappa"] = outputs.kappa.item() if hasattr(outputs.kappa, 'item') else outputs.kappa
                     log_dict["train/k_99"] = outputs.k_99.item() if hasattr(outputs.k_99, 'item') else outputs.k_99
 
                 if opt_muon:
