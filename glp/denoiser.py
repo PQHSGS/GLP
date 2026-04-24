@@ -466,7 +466,17 @@ class GLP(nn.Module):
 
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
-if calc_svd:
+
+        # --- Manifold Spectral Measurements ---
+        # Measure every 10 steps to optimize time overhead
+        calc_svd = False
+        if global_step is None:
+            calc_svd = True
+        elif (global_step + 1) % 10 == 0:
+            calc_svd = True
+
+        PR, H_SVD, kappa = 0.0, 0.0, 0.0
+        if calc_svd:
             with torch.no_grad():
                 X = latents.view(-1, latents.shape[-1]).float()
                 if X.shape[0] > 2048:
