@@ -466,42 +466,39 @@ class GLP(nn.Module):
 
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
-
-        # --- Manifold Spectral Measurements ---
-        # Measure every 10 steps to optimize time overhead
-        calc_svd = False
-        if global_step is None:
-            calc_svd = True
-        elif (global_step + 1) % 10 == 0:
-            calc_svd = True
-
-        PR, H_SVD, kappa = 0.0, 0.0, 0.0
-        if calc_svd:
+if calc_svd:
             with torch.no_grad():
-                # use normalized latents (the data manifold)
                 X = latents.view(-1, latents.shape[-1]).float()
-                # subsample to max 2048 to keep complexity low O(B * D^2)
                 if X.shape[0] > 2048:
                     X = X[:2048]
                 
-                # 1. Center the batch
                 X_centered = X - X.mean(dim=0)
-                
-                # 2. Compute Singular Values (s)
                 s = torch.linalg.svdvals(X_centered)
-                epsilon = 1e-9
                 
-                # 3. Participation Ratio (PR)
-                lambdas = s ** 2
+                # --- NEW: Robust Noise Floor Handling ---
+                # Anything 1e-6 times smaller than max is numerical noise in FP32
+                s_max = s[0]
+                s_clean = s[s > (s_max * 1e-6)] 
+                lambdas = s_clean ** 2
                 sum_lambdas = lambdas.sum()
+                
+                # 1. Participation Ratio (PR) - Uses the clean signal only
                 PR = (sum_lambdas ** 2) / (lambdas ** 2).sum()
                 
-                # 4. Spectral Entropy (H_SVD)
-                p = lambdas / (sum_lambdas + epsilon)
-                H_SVD = -torch.sum(p * torch.log(p + epsilon))
+                # 2. Spectral Entropy (H_SVD) - Stabilized
+                p = lambdas / (sum_lambdas + 1e-9)
+                H_SVD = -torch.sum(p * torch.log(p + 1e-9))
                 
-                # 5. Condition Number (kappa)
-                kappa = s.max() / (s.min() + epsilon)
+                # 3. Truncated Condition Number (kappa_rel)
+                # Instead of dividing by the 'dead' minimum, compare to the 64th or 128th dim
+                # This measures the 'steepness' of the needle's core.
+                ref_idx = min(63, len(s) - 1)
+                kappa_rel = s[0] / (s[ref_idx] + 1e-9)
+                
+                # 4. Dimension for 99% Variance (k_99)
+                # The 'Hard Count' version of PR. 
+                cum_var = torch.cumsum(lambdas, dim=0) / sum_lambdas
+                k_99 = (cum_var < 0.99).sum().float()
 
         return SimpleNamespace(
             latents=outputs,
