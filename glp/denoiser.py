@@ -522,7 +522,8 @@ class GLP(nn.Module):
             cos_sim=cos_sim,
             PR=PR,
             H_SVD=H_SVD,
-            kappa=kappa,
+            kappa=kappa_rel,
+            k_99=k_99,
         )
 
 def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_only=False):
