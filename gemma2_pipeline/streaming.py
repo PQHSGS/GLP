@@ -156,21 +156,29 @@ def stream_train(args):
     LOGGER.info("Setting up GLP denoiser")
     glp_model = setup_glp_model(hidden_size, args).to(device)
     total_steps = args.total_steps
-    use_muon = getattr(args, "use_muon", True)
-    
-    if use_muon:
-        muon_params, adamw_params = [], []
-        for name, p in glp_model.named_parameters():
-            if not p.requires_grad or "normalizer" in name: continue
-            if p.ndim == 2: muon_params.append(p)
-            else: adamw_params.append(p)
-        
-        from torch.optim import Muon
-        opt_muon = Muon(muon_params, lr=0.03, momentum=0.95, ns_steps=6)
-        opt_adamw = torch.optim.AdamW(adamw_params, lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=1e-4)
-    else:
-        opt_muon = None
-        opt_adamw = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
+    # Baseline optimizer: plain AdamW over all trainable GLP parameters.
+    opt_adamw = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
+
+    # Legacy Hybrid Muon-AdamW optimizer. Kept for future experiments.
+    # use_muon = getattr(args, "use_muon", False)
+    # if use_muon:
+    #     muon_params, adamw_params = [], []
+    #     for name, p in glp_model.named_parameters():
+    #         if not p.requires_grad or "normalizer" in name:
+    #             continue
+    #         if p.ndim == 2:
+    #             muon_params.append(p)
+    #         else:
+    #             adamw_params.append(p)
+    #
+    #     from torch.optim import Muon
+    #     opt_muon = Muon(muon_params, lr=0.03, momentum=0.95, ns_steps=6)
+    #     opt_adamw = torch.optim.AdamW(
+    #         adamw_params,
+    #         lr=args.learning_rate,
+    #         betas=(0.9, 0.95),
+    #         weight_decay=1e-4,
+    #     )
 
     from functools import partial
     
@@ -182,7 +190,6 @@ def stream_train(args):
         final_factor=getattr(args, "final_factor", 0.01),
     )
 
-    sched_muon = torch.optim.lr_scheduler.LambdaLR(opt_muon, lr_lambda=lr_lambda) if opt_muon else None
     sched_adamw = torch.optim.lr_scheduler.LambdaLR(opt_adamw, lr_lambda=lr_lambda)
 
     if args.wandb:
@@ -374,58 +381,51 @@ def stream_train(args):
             
             batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
             
-            # --- GRADIENT DIAGNOSTICS ---
-            # Run every 5 steps to avoid massive overhead
-            calc_grad_coherence = False
-            if (global_step + 1) % 5 == 0:
-                calc_grad_coherence = True
+            # Legacy 5-step gradient coherence diagnostics. Disabled for the
+            # baseline run to keep training behavior and logging simple.
+            # calc_grad_coherence = False
+            # if (global_step + 1) % 5 == 0:
+            #     calc_grad_coherence = True
+            # diag_grad_cos_sim, diag_grad_norm, diag_grad_hoyer = 0.0, 0.0, 0.0
+            # if calc_grad_coherence:
+            #     opt_adamw.zero_grad()
+            #     half_size = batch['latents'].shape[0] // 2
+            #     batch_1 = {k: (v[:half_size] if v is not None else None) for k, v in batch.items()}
+            #     batch_2 = {k: (v[half_size:] if v is not None else None) for k, v in batch.items()}
+            #     target_layer = glp_model.denoiser.model.layers[0].up_proj.weight
+            #     D_grad = target_layer.numel()
+            #     with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
+            #         out_1 = glp_model(**batch_1, global_step=global_step, total_steps=total_steps)
+            #     grad_1 = torch.autograd.grad(out_1.loss, target_layer)[0]
+            #     with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
+            #         out_2 = glp_model(**batch_2, global_step=global_step, total_steps=total_steps)
+            #     grad_2 = torch.autograd.grad(out_2.loss, target_layer)[0]
+            #     with torch.no_grad():
+            #         g1_flat = grad_1.view(-1)
+            #         g2_flat = grad_2.view(-1)
+            #         diag_grad_cos_sim = torch.nn.functional.cosine_similarity(g1_flat, g2_flat, dim=0).item()
+            #         full_grad = (g1_flat + g2_flat) / 2.0
+            #         diag_grad_norm = full_grad.norm(p=2).item()
+            #         l1_norm = full_grad.abs().sum()
+            #         l2_norm = diag_grad_norm
+            #         sqrt_d = math.sqrt(D_grad)
+            #         hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
+            #         diag_grad_hoyer = hoyer.item()
+            #     opt_adamw.zero_grad()
 
-            diag_grad_cos_sim, diag_grad_norm, diag_grad_hoyer = 0.0, 0.0, 0.0
-            
-            if calc_grad_coherence:
-                if opt_muon: opt_muon.zero_grad()
-                opt_adamw.zero_grad()
-                
-                half_size = batch['latents'].shape[0] // 2
-                
-                # Split batch
-                batch_1 = {k: (v[:half_size] if v is not None else None) for k, v in batch.items()}
-                batch_2 = {k: (v[half_size:] if v is not None else None) for k, v in batch.items()}
-                
-                # Target a central layer in GLP
-                target_layer = glp_model.denoiser.model.layers[0].up_proj.weight
-                D_grad = target_layer.numel()
-                
-                # Backward Pass 1
-                with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-                    out_1 = glp_model(**batch_1, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
-                grad_1 = torch.autograd.grad(out_1.loss, target_layer)[0]
-                
-                # Backward Pass 2
-                with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-                    out_2 = glp_model(**batch_2, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
-                grad_2 = torch.autograd.grad(out_2.loss, target_layer)[0]
-                
-                with torch.no_grad():
-                    g1_flat = grad_1.view(-1)
-                    g2_flat = grad_2.view(-1)
-                    
-                    diag_grad_cos_sim = torch.nn.functional.cosine_similarity(g1_flat, g2_flat, dim=0).item()
-                    full_grad = (g1_flat + g2_flat) / 2.0
-                    diag_grad_norm = full_grad.norm(p=2).item()
-                    
-                    import math
-                    l1_norm = full_grad.abs().sum()
-                    l2_norm = diag_grad_norm
-                    sqrt_d = math.sqrt(D_grad)
-                    hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
-                    diag_grad_hoyer = hoyer.item()
-                
-                if opt_muon: opt_muon.zero_grad()
-                opt_adamw.zero_grad()
+            loss_kwargs = {
+                "tail_aware_weight": getattr(args, "tail_aware_weight", 0.0),
+                "tail_aware_min_weight": getattr(args, "tail_aware_min_weight", 0.1),
+                "tail_aware_max_weight": getattr(args, "tail_aware_max_weight", 10.0),
+            }
 
             with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-                outputs = glp_model(**batch, global_step=global_step, total_steps=total_steps, two_phase=getattr(args, "two_phase", True))
+                outputs = glp_model(
+                    **batch,
+                    global_step=global_step,
+                    total_steps=total_steps,
+                    loss_kwargs=loss_kwargs,
+                )
                 loss = outputs.loss
                 tgt_norm = outputs.tgt_norm
                 latent_pre_l2 = outputs.latent_pre_l2
@@ -434,18 +434,12 @@ def stream_train(args):
                 latent_post_l1 = outputs.latent_post_l1
                 loss_rel = outputs.loss_rel
                 loss_raw = outputs.loss_raw
-                cos_sim = outputs.cos_sim
                 
             loss.backward()
             grad_clip_threshold = float(getattr(args, "gradient_clipping_threshold", 1.0))
             max_grad_norm = grad_clip_threshold if grad_clip_threshold > 0.0 else float("inf")
-            grad_norm = torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
-            grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
+            torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
             
-            if opt_muon:
-                opt_muon.step()
-                opt_muon.zero_grad()
-                sched_muon.step()
             opt_adamw.step()
             opt_adamw.zero_grad()
             sched_adamw.step()
@@ -456,6 +450,9 @@ def stream_train(args):
             
             log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 10)))
             if wandb_run and global_step % log_every_n_steps == 0:
+                def metric_value(value):
+                    return value.item() if hasattr(value, "item") else value
+
                 log_dict = {
                     "train/loss": loss.item(),
                     "train/loss_rel": loss_rel.item(),
@@ -465,36 +462,41 @@ def stream_train(args):
                     "train/latent_post_l2": latent_post_l2.item(),
                     "train/latent_pre_l1": latent_pre_l1.item(),
                     "train/latent_post_l1": latent_post_l1.item(),
-                    "train/cos_sim": cos_sim.item(),
-                    "train/grad_norm": grad_norm_value,
-                    "train/pre_l2_std": outputs.pre_l2_std,
-                    "train/post_l2_std": outputs.post_l2_std,
-                    "train/batch_mean": getattr(outputs, "batch_mean", 0.0),
-                    "train/batch_var": getattr(outputs, "batch_var", 0.0),
-                    "train/global_mean": getattr(outputs, "global_mean", 0.0),
-                    "train/global_var": getattr(outputs, "global_var", 0.0),
+                    "train/tail_aware_weight": metric_value(outputs.tail_aware_weight),
+                    "train/tail_aware_min_weight": metric_value(outputs.tail_aware_min_weight),
+                    "train/tail_aware_max_weight": metric_value(outputs.tail_aware_max_weight),
+                    "train/tail_fraction": metric_value(outputs.tail_fraction),
+                    "train/tail_weight_mean": metric_value(outputs.tail_weight_mean),
+                    "train/tail_weight_max": metric_value(outputs.tail_weight_max),
+                    "train/tail_base_mse": metric_value(outputs.tail_base_mse),
+                    "train/tail_weighted_mse": metric_value(outputs.tail_weighted_mse),
+                    "train/tail_region_mse": metric_value(outputs.tail_region_mse),
+                    "train/non_tail_region_mse": metric_value(outputs.non_tail_region_mse),
                 }
                 
-                if outputs.PR != 0.0:
-                    log_dict["train/PR"] = outputs.PR.item() if hasattr(outputs.PR, 'item') else outputs.PR
-                    log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD
-                    log_dict["train/kappa"] = outputs.kappa.item() if hasattr(outputs.kappa, 'item') else outputs.kappa
-                    log_dict["train/k_99"] = outputs.k_99.item() if hasattr(outputs.k_99, 'item') else outputs.k_99
-                    if hasattr(outputs, 'dead_ratio') and outputs.dead_ratio != 0.0:
-                        log_dict["train/dead_ratio"] = outputs.dead_ratio.item() if hasattr(outputs.dead_ratio, 'item') else outputs.dead_ratio
-                        log_dict["train/hoyer_sparsity"] = outputs.hoyer_sparsity.item() if hasattr(outputs.hoyer_sparsity, 'item') else outputs.hoyer_sparsity
-                    if hasattr(outputs, 'loss_early'):
-                        log_dict["train/loss_early"] = outputs.loss_early
-                        log_dict["train/loss_mid"] = outputs.loss_mid
-                        log_dict["train/loss_late"] = outputs.loss_late
-                        
-                if diag_grad_cos_sim != 0.0:
-                    log_dict["train/diag_grad_cos_sim"] = diag_grad_cos_sim
-                    log_dict["train/diag_grad_norm"] = diag_grad_norm
-                    log_dict["train/diag_grad_hoyer"] = diag_grad_hoyer
-
-                if opt_muon:
-                    log_dict["train/lr_muon"] = sched_muon.get_last_lr()[0]
+                # Legacy tracking intentionally disabled for the baseline run:
+                # grad_norm, cosine similarity, pre/post L2 std,
+                # batch/global normalizer stats, PR/H_SVD/kappa/k_99,
+                # dead_ratio, hoyer_sparsity, loss_early/loss_mid/loss_late,
+                # and gradient coherence.
+                # if outputs.PR != 0.0:
+                #     log_dict["train/PR"] = outputs.PR.item() if hasattr(outputs.PR, 'item') else outputs.PR
+                #     log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD
+                #     log_dict["train/kappa"] = outputs.kappa.item() if hasattr(outputs.kappa, 'item') else outputs.kappa
+                #     log_dict["train/k_99"] = outputs.k_99.item() if hasattr(outputs.k_99, 'item') else outputs.k_99
+                #     if hasattr(outputs, 'dead_ratio') and outputs.dead_ratio != 0.0:
+                #         log_dict["train/dead_ratio"] = outputs.dead_ratio.item() if hasattr(outputs.dead_ratio, 'item') else outputs.dead_ratio
+                #         log_dict["train/hoyer_sparsity"] = outputs.hoyer_sparsity.item() if hasattr(outputs.hoyer_sparsity, 'item') else outputs.hoyer_sparsity
+                #     if hasattr(outputs, 'loss_early'):
+                #         log_dict["train/loss_early"] = outputs.loss_early
+                #         log_dict["train/loss_mid"] = outputs.loss_mid
+                #         log_dict["train/loss_late"] = outputs.loss_late
+                # if diag_grad_cos_sim != 0.0:
+                #     log_dict["train/diag_grad_cos_sim"] = diag_grad_cos_sim
+                #     log_dict["train/diag_grad_norm"] = diag_grad_norm
+                #     log_dict["train/diag_grad_hoyer"] = diag_grad_hoyer
+                # if opt_muon:
+                #     log_dict["train/lr_muon"] = sched_muon.get_last_lr()[0]
                 log_dict["train/lr_adamw"] = sched_adamw.get_last_lr()[0]
                 wandb_run.log(log_dict, step=global_step)
 

@@ -384,11 +384,11 @@ class GLP(nn.Module):
         latents: torch.FloatTensor,                       # (batch, seq, dim)
         u: torch.FloatTensor | float | None = None,       # (batch,) or scalar
         layer_idx: torch.LongTensor | int | None = None,  # (batch,) or scalar
-        loss_kwargs: dict = {},
+        loss_kwargs: dict | None = None,
         generator: torch.Generator | None = None,
         global_step: int | None = None,
         total_steps: int | None = None,
-        two_phase: bool = True,
+        two_phase: bool = False,
         **kwargs
     ) -> SimpleNamespace:
         # prepare extra params
@@ -398,17 +398,21 @@ class GLP(nn.Module):
         u = torch.full((latents.shape[0],), u, device=latents.device) if isinstance(u, float) else u
 
         phase = 2
-        if two_phase and global_step is not None and total_steps is not None:
-            if global_step <= 0.4 * total_steps:
-                phase = 1
-
-        if phase == 1:
-            if u is None:
-                u_normal = torch.randn(latents.shape[0], device=latents.device, generator=generator)
-                u = torch.sigmoid(u_normal)
-        else:
-            if u is None:
-                u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
+        # Legacy two-phase schedule. Disabled while returning to the baseline
+        # Flow Matching setup: plain MSE with uniformly sampled u.
+        # if two_phase and global_step is not None and total_steps is not None:
+        #     if global_step <= 0.4 * total_steps:
+        #         phase = 1
+        #
+        # if phase == 1:
+        #     if u is None:
+        #         u_normal = torch.randn(latents.shape[0], device=latents.device, generator=generator)
+        #         u = torch.sigmoid(u_normal)
+        # else:
+        #     if u is None:
+        #         u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
+        if u is None:
+            u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
 
         # prepare flow matching inputs and target
         noise = torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(latents.device)
@@ -430,20 +434,63 @@ class GLP(nn.Module):
         outputs_f32 = outputs.float()
         target_f32 = target.float()
 
-        # compute loss
-        if phase == 1:
-            loss_unreduced = torch.nn.functional.mse_loss(outputs_f32, target_f32, reduction='none').view(latents.shape[0], -1).mean(dim=-1)
-            if self.normalizer.normalization_method == "log_norm":
-                loss_unreduced = loss_unreduced * 1e5
-            loss = loss_unreduced.mean()
-        else:
-            u_t = meta["u"].to(device=outputs.device, dtype=torch.float32).view(-1, 1, 1)
-            w = 1.0 / (1.0 - u_t + 1e-4)
-            error = outputs_f32 - target_f32
-            delta = 0.01
-            loss_raw_hub = (delta ** 2) * (torch.sqrt(1.0 + (error / delta) ** 2) - 1.0)
-            loss_unreduced = (w * loss_raw_hub).view(latents.shape[0], -1).mean(dim=-1)
-            loss = loss_unreduced.mean()
+        # compute loss: baseline MSE, optionally reweighted on rare large
+        # clean-latent coordinates for tail-aware experiments.
+        loss_kwargs = {} if loss_kwargs is None else loss_kwargs
+        mse_element = torch.nn.functional.mse_loss(
+            outputs_f32,
+            target_f32,
+            reduction='none',
+        )
+        if self.normalizer.normalization_method == "log_norm":
+            mse_element = mse_element * 1e5
+
+        loss_unreduced = mse_element.view(latents.shape[0], -1).mean(dim=-1)
+        tail_base_mse = loss_unreduced.detach().mean()
+        tail_aware_weight = float(loss_kwargs.get("tail_aware_weight", 0.0) or 0.0)
+        tail_aware_min_weight = float(loss_kwargs.get("tail_aware_min_weight", 0.1) or 0.0)
+        tail_aware_max_weight = float(loss_kwargs.get("tail_aware_max_weight", 10.0) or 0.0)
+
+        tail_fraction = outputs_f32.new_tensor(0.0)
+        tail_weight_mean = outputs_f32.new_tensor(1.0)
+        tail_weight_max = outputs_f32.new_tensor(1.0)
+        tail_region_mse = outputs_f32.new_tensor(0.0)
+        non_tail_region_mse = outputs_f32.new_tensor(0.0)
+
+        if tail_aware_weight > 0.0:
+            with torch.no_grad():
+                raw_target = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
+                raw_magnitude = raw_target.abs()
+                batch_mean_mag = raw_magnitude.mean(dim=-1, keepdim=True).clamp_min(1e-8)
+                tail_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
+                if tail_aware_min_weight > 0.0 or tail_aware_max_weight > 0.0:
+                    clamp_kwargs = {}
+                    if tail_aware_min_weight > 0.0:
+                        clamp_kwargs["min"] = tail_aware_min_weight
+                    if tail_aware_max_weight > 0.0:
+                        clamp_kwargs["max"] = tail_aware_max_weight
+                    tail_multiplier = tail_multiplier.clamp(**clamp_kwargs)
+                tail_mask = tail_multiplier > 1.0
+                tail_fraction = tail_mask.float().mean()
+                tail_weight_mean = tail_multiplier.mean()
+                tail_weight_max = tail_multiplier.max()
+                if tail_mask.any():
+                    tail_region_mse = mse_element.detach()[tail_mask].mean()
+                non_tail_mask = ~tail_mask
+                if non_tail_mask.any():
+                    non_tail_region_mse = mse_element.detach()[non_tail_mask].mean()
+            loss_unreduced = (mse_element * tail_multiplier.to(mse_element.dtype)).view(latents.shape[0], -1).mean(dim=-1)
+        loss = loss_unreduced.mean()
+        tail_weighted_mse = loss.detach()
+
+        # Legacy phase-2 pseudo-Huber objective. Kept for future experiments.
+        # u_t = meta["u"].to(device=outputs.device, dtype=torch.float32).view(-1, 1, 1)
+        # w = 1.0 / (1.0 - u_t + 1e-4)
+        # error = outputs_f32 - target_f32
+        # delta = 0.01
+        # loss_raw_hub = (delta ** 2) * (torch.sqrt(1.0 + (error / delta) ** 2) - 1.0)
+        # loss_unreduced = (w * loss_raw_hub).view(latents.shape[0], -1).mean(dim=-1)
+        # loss = loss_unreduced.mean()
 
         # ===== proper metrics =====
         raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1])
@@ -473,16 +520,18 @@ class GLP(nn.Module):
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
 
-        # --- Diagnostic Metrics (every 5 steps) ---
+        # --- Legacy diagnostic metrics (disabled) ---
+        # These 5-step manifold/sparsity diagnostics are intentionally left in
+        # the file but disabled while simplifying training back to MSE + AdamW.
         calc_metrics = False
-        if global_step is None or (global_step + 1) % 5 == 0:
-            calc_metrics = True
+        # if global_step is None or (global_step + 1) % 5 == 0:
+        #     calc_metrics = True
 
         PR, H_SVD, kappa, k_99 = 0.0, 0.0, 0.0, 0.0
         dead_ratio, hoyer_sparsity = 0.0, 0.0
         loss_early, loss_mid, loss_late = 0.0, 0.0, 0.0
         
-        if calc_metrics:
+        if False and calc_metrics:
             with torch.no_grad():
                 # --- Timestep Loss Mask ---
                 # Calculate raw loss per batch item
@@ -566,6 +615,16 @@ class GLP(nn.Module):
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
+            tail_aware_weight=tail_aware_weight,
+            tail_aware_min_weight=tail_aware_min_weight,
+            tail_aware_max_weight=tail_aware_max_weight,
+            tail_fraction=tail_fraction,
+            tail_weight_mean=tail_weight_mean,
+            tail_weight_max=tail_weight_max,
+            tail_base_mse=tail_base_mse,
+            tail_weighted_mse=tail_weighted_mse,
+            tail_region_mse=tail_region_mse,
+            non_tail_region_mse=non_tail_region_mse,
             PR=PR,
             H_SVD=H_SVD,
             kappa=kappa,

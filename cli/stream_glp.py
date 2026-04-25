@@ -71,16 +71,15 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     )
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
     parser.add_argument("--log-every-n-steps", type=int, default=train_defaults.log_every_n_steps)
+    parser.add_argument("--tail-aware-weight", type=float, default=train_defaults.tail_aware_weight, help="Tail aggression alpha. 0 disables tail-aware weighting.")
+    parser.add_argument("--tail-aware-min-weight", type=float, default=train_defaults.tail_aware_min_weight, help="Minimum raw-magnitude loss multiplier.")
+    parser.add_argument("--tail-aware-max-weight", type=float, default=train_defaults.tail_aware_max_weight, help="Maximum raw-magnitude loss multiplier. <=0 disables max clamping.")
     parser.add_argument("--warmup-ratio", type=float, default=train_defaults.warmup_ratio)
     parser.add_argument("--initial-factor", type=float, default=train_defaults.initial_factor)
     parser.add_argument("--final-factor", type=float, default=train_defaults.final_factor)
     parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=train_defaults.use_bf16)
     parser.add_argument("--shuffle", action=argparse.BooleanOptionalAction, default=train_defaults.shuffle)
     
-    # Optional Training Features
-    parser.add_argument("--two-phase", action=argparse.BooleanOptionalAction, default=True, help="Enable 2-phase Flow Matching training.")
-    parser.add_argument("--use-muon", action=argparse.BooleanOptionalAction, default=True, help="Enable Hybrid Muon-AdamW optimizer.")
-
     parser.add_argument("--save-root", default=".")
     parser.add_argument("--run-name", default="glp-stream")
     parser.add_argument("--checkpoint-token-step", type=int, default=1000000, help="Save a checkpoint every N tokens")
