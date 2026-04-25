@@ -666,4 +666,4 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_on
     model = GLP(**config.glp_kwargs)
     model.load_pretrained(resolved_folder, name=checkpoint)
     model.to(device)
-    return model
+    return model, model.normalizer.mean, model.normalizer.var
