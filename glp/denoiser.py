@@ -10,6 +10,7 @@ from pathlib import Path
 from safetensors.torch import load_file, save_file
 import torch
 import torch.nn as nn
+from torch.nn.utils.parametrizations import spectral_norm
 from types import SimpleNamespace
 
 try:
@@ -198,6 +199,10 @@ class Normalizer(nn.Module):
 # ==========================
 #     Denoiser Classes
 # ==========================
+def maybe_spectral_norm(layer, enabled=False):
+    return spectral_norm(layer, n_power_iterations=1) if enabled else layer
+
+
 def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
     """
     Create sinusoidal timestep embeddings.    
@@ -222,16 +227,17 @@ class TransformerMLPBlock(nn.Module):
         d_model,
         d_mlp,
         d_input,
+        use_spectral_norm=False,
     ):
         super().__init__()
         self.d_model = d_model
         self.d_mlp = d_mlp
         self.d_input = d_input
 
-        self.up_proj = nn.Linear(d_model, d_mlp)
-        self.down_proj = nn.Linear(d_mlp, d_model)
-        self.gate_proj = nn.Linear(d_model, d_mlp)
-        self.time_proj = nn.Linear(d_model, d_mlp)
+        self.up_proj = maybe_spectral_norm(nn.Linear(d_model, d_mlp), use_spectral_norm)
+        self.down_proj = maybe_spectral_norm(nn.Linear(d_mlp, d_model), use_spectral_norm)
+        self.gate_proj = maybe_spectral_norm(nn.Linear(d_model, d_mlp), use_spectral_norm)
+        self.time_proj = maybe_spectral_norm(nn.Linear(d_model, d_mlp), use_spectral_norm)
         self.act = nn.SiLU()
         self.ln = nn.LayerNorm(d_model)
 
@@ -259,6 +265,7 @@ class TransformerMLPDenoiser(nn.Module):
         d_input=1536,
         n_layers=12,
         multi_layer_n_layers=None,
+        use_spectral_norm=False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -271,11 +278,12 @@ class TransformerMLPDenoiser(nn.Module):
             TransformerMLPBlock(
                 d_model=d_model,
                 d_mlp=d_mlp,
-                d_input=d_input
+                d_input=d_input,
+                use_spectral_norm=use_spectral_norm,
             ) for _ in range(n_layers)
         ])
-        self.in_proj = nn.Linear(d_input, d_model)
-        self.out_proj = nn.Linear(d_model, d_input)
+        self.in_proj = maybe_spectral_norm(nn.Linear(d_input, d_model), use_spectral_norm)
+        self.out_proj = maybe_spectral_norm(nn.Linear(d_model, d_input), use_spectral_norm)
 
         self.time_embed = nn.Sequential(
             nn.Linear(d_model, d_model),

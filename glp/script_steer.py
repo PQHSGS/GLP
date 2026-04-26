@@ -87,6 +87,10 @@ def generate_with_intervention_wrapper(seed=42):
     def generate_with_intervention(text, hf_model, hf_processor, generate_kwargs={"max_new_tokens": 10}, layers=[], intervention_wrapper=None, intervention_kwargs={}, forward_only=False):
         if seed is not None:
             transformers.set_seed(seed)
+        if getattr(hf_processor, "pad_token", None) is None:
+            if getattr(hf_processor, "eos_token", None) is None:
+                raise ValueError("Tokenizer needs a pad_token or eos_token for batched generation.")
+            hf_processor.pad_token = hf_processor.eos_token
         inputs = hf_processor(text, return_tensors="pt", padding=True).to(hf_model.device)
         if intervention_wrapper is not None:
             intervention_fn = intervention_wrapper(**intervention_kwargs)

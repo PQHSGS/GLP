@@ -61,6 +61,7 @@ class ModelTrainConfig:
     d_model: int = 4096
     d_mlp: int = 8192
     denoiser_layers: int = 3
+    use_spectral_norm: bool = False
     multi_layer_n_layers: Optional[int] = None
     layer: int = 7
     layer_prefix: str = "model.layers"

@@ -39,11 +39,17 @@ def load_model_and_tokenizer(
 ) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
     torch_dtype = parse_torch_dtype(torch_dtype_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None and tokenizer.eos_token is not None:
+        tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch_dtype)
+    if getattr(model.config, "pad_token_id", None) is None and tokenizer.pad_token_id is not None:
+        model.config.pad_token_id = tokenizer.pad_token_id
     model = model.to(device)
     model.config.use_cache = False
     if getattr(model, "generation_config", None) is not None:
         model.generation_config.use_cache = False
+        if model.generation_config.pad_token_id is None and tokenizer.pad_token_id is not None:
+            model.generation_config.pad_token_id = tokenizer.pad_token_id
     model.eval()
     return model, tokenizer
 

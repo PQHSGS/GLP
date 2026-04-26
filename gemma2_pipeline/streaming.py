@@ -124,6 +124,7 @@ def setup_glp_model(hidden_size, args):
             "d_mlp": d_mlp,
             "n_layers": args.denoiser_layers,
             "multi_layer_n_layers": None,
+            "use_spectral_norm": getattr(args, "use_spectral_norm", False),
         },
         tracedict_config={
             "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
@@ -254,6 +255,7 @@ def stream_train(args):
                     "d_mlp": d_mlp,
                     "n_layers": args.denoiser_layers,
                     "multi_layer_n_layers": None,
+                    "use_spectral_norm": getattr(args, "use_spectral_norm", False),
                 },
                 "tracedict_config": {
                     "layer_prefix": getattr(args, "layer_prefix", "model.layers"),

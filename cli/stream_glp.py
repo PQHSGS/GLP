@@ -88,6 +88,13 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--denoiser-layers", type=int, default=train_defaults.denoiser_layers)
     parser.add_argument("--d-model-mult", type=int, default=d_model_mult_default)
     parser.add_argument("--d-mlp-mult", type=int, default=d_mlp_mult_default)
+    parser.add_argument(
+        "--spectral-norm",
+        dest="use_spectral_norm",
+        action=argparse.BooleanOptionalAction,
+        default=train_defaults.use_spectral_norm,
+        help="Apply spectral normalization to GLP denoiser projection layers.",
+    )
     
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=train_defaults.wandb_enabled)
     parser.add_argument("--wandb-project", default=train_defaults.wandb_project)
