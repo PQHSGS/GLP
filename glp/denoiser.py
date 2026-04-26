@@ -34,7 +34,7 @@ def _canonicalize_normalization_method(method):
     }
     method = aliases.get(method, method)
 
-    if method in {"gaussian", "log_norm", "rmsnorm"}:
+    if method in {"gaussian", "log_norm", "rmsnorm", "iqr"}:
         return method
 
     if method == "quantile":
@@ -54,7 +54,7 @@ def _canonicalize_normalization_method(method):
 
     raise ValueError(
         f"Unsupported normalization_method '{method}'. "
-        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'quantile_XX', '99', '0.99']."
+        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'iqr', 'quantile_XX', '99', '0.99']."
     )
 
 
@@ -120,7 +120,11 @@ class Normalizer(nn.Module):
         var = torch.clamp(var, min=1e-8)
         scale = torch.sqrt(var)
 
-        if self.normalization_method == "gaussian" or self.normalization_method.startswith("quantile_"):
+        if (
+            self.normalization_method == "gaussian"
+            or self.normalization_method == "iqr"
+            or self.normalization_method.startswith("quantile_")
+        ):
             return (rep.to(mean.device) - mean) / scale
         if self.normalization_method == "rmsnorm":
             return rep.to(scale.device) / scale
@@ -137,7 +141,11 @@ class Normalizer(nn.Module):
         var = torch.clamp(var, min=1e-8)
         scale = torch.sqrt(var)
 
-        if self.normalization_method == "gaussian" or self.normalization_method.startswith("quantile_"):
+        if (
+            self.normalization_method == "gaussian"
+            or self.normalization_method == "iqr"
+            or self.normalization_method.startswith("quantile_")
+        ):
             return rep.to(var.device) * scale + mean
         if self.normalization_method == "rmsnorm":
             return rep.to(scale.device) * scale

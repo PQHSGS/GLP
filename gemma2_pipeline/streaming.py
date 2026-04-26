@@ -46,7 +46,7 @@ def canonicalize_normalization_method(method: str | None) -> str:
     }
     method = aliases.get(method, method)
 
-    if method in {"gaussian", "log_norm", "rmsnorm"}:
+    if method in {"gaussian", "log_norm", "rmsnorm", "iqr"}:
         return method
 
     if method == "quantile":
@@ -66,7 +66,7 @@ def canonicalize_normalization_method(method: str | None) -> str:
 
     raise ValueError(
         f"Unsupported normalization_method '{method}'. "
-        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'quantile_XX', '99', '0.99']."
+        "Expected one of ['gaussian', 'log_norm', 'rmsnorm', 'iqr', 'quantile_XX', '99', '0.99']."
     )
 
 
@@ -142,6 +142,7 @@ def stream_train(args):
     use_stats = normalization_requires_stats(normalization_method)
     use_gaussian_stats = normalization_method == "gaussian"
     use_rmsnorm_stats = normalization_method == "rmsnorm"
+    use_iqr_stats = normalization_method == "iqr"
     quantile_percent = quantile_percent_from_method(normalization_method)
     use_quantile_stats = quantile_percent is not None
     
@@ -202,6 +203,11 @@ def stream_train(args):
     tmp_dir = Path(f"data/tmp_stream_{args.run_name}")
     stats = RunningMoments(hidden_size) if (use_gaussian_stats or use_quantile_stats) else None
     second_moment_sum = np.zeros(hidden_size, dtype=np.float64) if use_rmsnorm_stats else None
+    second_moment_count = 0
+    iqr_q25 = np.zeros(hidden_size, dtype=np.float64) if use_iqr_stats else None
+    iqr_median = np.zeros(hidden_size, dtype=np.float64) if use_iqr_stats else None
+    iqr_q75 = np.zeros(hidden_size, dtype=np.float64) if use_iqr_stats else None
+    iqr_count = 0
     quantile_scale = np.ones(hidden_size, dtype=np.float64) if use_quantile_stats else None
     quantile_count = 0
     fineweb = FineWebSourceConfig(
@@ -320,6 +326,22 @@ def stream_train(args):
                     second_moment_sum += np.square(vectors_np).sum(axis=0)
                     second_moment_count += vectors_np.shape[0]
 
+                if use_iqr_stats and iqr_q25 is not None and iqr_median is not None and iqr_q75 is not None:
+                    batch_count = vectors_np.shape[0]
+                    chunk_q25 = np.percentile(vectors_np, 25, axis=0)
+                    chunk_median = np.percentile(vectors_np, 50, axis=0)
+                    chunk_q75 = np.percentile(vectors_np, 75, axis=0)
+                    if iqr_count == 0:
+                        iqr_q25 = chunk_q25
+                        iqr_median = chunk_median
+                        iqr_q75 = chunk_q75
+                    else:
+                        total = iqr_count + batch_count
+                        iqr_q25 = (iqr_q25 * iqr_count + chunk_q25 * batch_count) / total
+                        iqr_median = (iqr_median * iqr_count + chunk_median * batch_count) / total
+                        iqr_q75 = (iqr_q75 * iqr_count + chunk_q75 * batch_count) / total
+                    iqr_count += batch_count
+
                 if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:
                     # Center the vectors using the current running mean before quantile calculation
                     centered_vectors = vectors_np - stats.mean
@@ -358,6 +380,12 @@ def stream_train(args):
             glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=device)
             glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=device)
             LOGGER.info("Updated cumulative rmsnorm stats from %d vectors.", second_moment_count)
+
+        elif use_iqr_stats and iqr_median is not None and iqr_q25 is not None and iqr_q75 is not None:
+            iqr = np.maximum(iqr_q75 - iqr_q25, 1e-6)
+            glp_model.normalizer.mean = torch.tensor(iqr_median, dtype=torch.float32, device=device)
+            glp_model.normalizer.var = torch.tensor(iqr * iqr, dtype=torch.float32, device=device)
+            LOGGER.info("Updated cumulative iqr stats from %d vectors.", iqr_count)
             
         elif use_quantile_stats and quantile_scale is not None:
             scale = np.maximum(quantile_scale, 1e-6)

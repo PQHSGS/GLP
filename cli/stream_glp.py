@@ -66,7 +66,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         default=train_defaults.normalization_method,
         help=(
             "Latent normalization method. Examples: gaussian, log_norm, rmsnorm, "
-            "quantile_99, quantile_97, 99, 97, 0.99"
+            "iqr, quantile_99, quantile_97, 99, 97, 0.99"
         ),
     )
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
