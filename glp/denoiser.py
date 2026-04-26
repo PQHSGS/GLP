@@ -463,6 +463,8 @@ class GLP(nn.Module):
                 raw_magnitude = raw_target.abs()
                 batch_mean_mag = raw_magnitude.mean(dim=-1, keepdim=True).clamp_min(1e-8)
                 tail_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
+                tail_weight_mean = tail_multiplier.mean()
+                tail_weight_max = tail_multiplier.max()
                 if tail_aware_min_weight > 0.0 or tail_aware_max_weight > 0.0:
                     clamp_kwargs = {}
                     if tail_aware_min_weight > 0.0:
@@ -472,8 +474,7 @@ class GLP(nn.Module):
                     tail_multiplier = tail_multiplier.clamp(**clamp_kwargs)
                 tail_mask = tail_multiplier > 1.0
                 tail_fraction = tail_mask.float().mean()
-                tail_weight_mean = tail_multiplier.mean()
-                tail_weight_max = tail_multiplier.max()
+
                 if tail_mask.any():
                     tail_region_mse = mse_element.detach()[tail_mask].mean()
                 non_tail_mask = ~tail_mask
@@ -590,16 +591,16 @@ class GLP(nn.Module):
                 hoyer_sparsity = hoyer.mean()
 
         # --- Normalizer Stats ---
-        batch_mean = latents.mean().item()
-        batch_var = latents.var().item()
+        batch_mean = raw_latents.mean()
+        batch_var = raw_latents.float().var(dim=0, unbiased=False).max()
         
         global_mean = 0.0
         if hasattr(self.normalizer, "mean") and torch.is_tensor(self.normalizer.mean):
-            global_mean = self.normalizer.mean.mean().item()
+            global_mean = self.normalizer.get_layer_stat(self.normalizer.mean, layer_idx).mean()
             
         global_var = 1.0
         if hasattr(self.normalizer, "var") and torch.is_tensor(self.normalizer.var):
-            global_var = self.normalizer.var.var().item()
+            global_var = self.normalizer.get_layer_stat(self.normalizer.var, layer_idx).max()
 
         return SimpleNamespace(
             latents=outputs,
