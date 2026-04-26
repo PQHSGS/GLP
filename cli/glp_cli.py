@@ -16,15 +16,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from collect_acts import build_parser as build_collect_parser
     from collect_acts import run as collect_run
-    from train_glp import build_parser as build_train_parser
-    from train_glp import run as train_run
     from stream_glp import build_parser as build_stream_parser
     from stream_glp import run as stream_run
 else:
     from .collect_acts import build_parser as build_collect_parser
     from .collect_acts import run as collect_run
-    from .train_glp import build_parser as build_train_parser
-    from .train_glp import run as train_run
     from .stream_glp import build_parser as build_stream_parser
     from .stream_glp import run as stream_run
 
@@ -39,11 +35,6 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[build_collect_parser(add_help=False)],
     )
 
-    subparsers.add_parser(
-        "train",
-        help="Write config and run GLP training",
-        parents=[build_train_parser(add_help=False)],
-    )
 
     subparsers.add_parser(
         "stream",
@@ -61,9 +52,6 @@ def main() -> None:
     # Delegate to existing scripts so behavior stays identical.
     if args.command == "collect":
         collect_run(args)
-        return
-    if args.command == "train":
-        train_run(args)
         return
     if args.command == "stream":
         stream_run(args)

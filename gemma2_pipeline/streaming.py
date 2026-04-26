@@ -438,7 +438,8 @@ def stream_train(args):
             loss.backward()
             grad_clip_threshold = float(getattr(args, "gradient_clipping_threshold", 1.0))
             max_grad_norm = grad_clip_threshold if grad_clip_threshold > 0.0 else float("inf")
-            torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
+            grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
             
             opt_adamw.step()
             opt_adamw.zero_grad()
@@ -457,14 +458,16 @@ def stream_train(args):
                     "train/loss": loss.item(),
                     "train/loss_rel": loss_rel.item(),
                     "train/loss_raw": loss_raw.item(),
+                    "train/grad_norm": grad_norm_value,
                     "train/target_norm": tgt_norm.item(),
                     "train/latent_pre_l2": latent_pre_l2.item(),
                     "train/latent_post_l2": latent_post_l2.item(),
                     "train/latent_pre_l1": latent_pre_l1.item(),
                     "train/latent_post_l1": latent_post_l1.item(),
-                    "train/tail_aware_weight": metric_value(outputs.tail_aware_weight),
-                    "train/tail_aware_min_weight": metric_value(outputs.tail_aware_min_weight),
-                    "train/tail_aware_max_weight": metric_value(outputs.tail_aware_max_weight),
+                    "train/batch_mean": metric_value(outputs.batch_mean),
+                    "train/batch_var": metric_value(outputs.batch_var),
+                    "train/global_mean": metric_value(outputs.global_mean),
+                    "train/global_var": metric_value(outputs.global_var),
                     "train/tail_fraction": metric_value(outputs.tail_fraction),
                     "train/tail_weight_mean": metric_value(outputs.tail_weight_mean),
                     "train/tail_weight_max": metric_value(outputs.tail_weight_max),
@@ -475,10 +478,8 @@ def stream_train(args):
                 }
                 
                 # Legacy tracking intentionally disabled for the baseline run:
-                # grad_norm, cosine similarity, pre/post L2 std,
-                # batch/global normalizer stats, PR/H_SVD/kappa/k_99,
-                # dead_ratio, hoyer_sparsity, loss_early/loss_mid/loss_late,
-                # and gradient coherence.
+                # grad_norm, cosine similarity, pre/post L2 std, PR/H_SVD/kappa/k_99,
+                # dead_ratio, hoyer_sparsity, loss_early/loss_mid/loss_late, and gradient coherence.
                 # if outputs.PR != 0.0:
                 #     log_dict["train/PR"] = outputs.PR.item() if hasattr(outputs.PR, 'item') else outputs.PR
                 #     log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD

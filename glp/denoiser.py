@@ -599,7 +599,7 @@ class GLP(nn.Module):
             
         global_var = 1.0
         if hasattr(self.normalizer, "var") and torch.is_tensor(self.normalizer.var):
-            global_var = self.normalizer.var.mean().item()
+            global_var = self.normalizer.var.var().item()
 
         return SimpleNamespace(
             latents=outputs,
