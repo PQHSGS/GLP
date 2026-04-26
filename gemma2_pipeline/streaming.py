@@ -432,6 +432,7 @@ def stream_train(args):
                 latent_post_l2 = outputs.latent_post_l2
                 latent_pre_l1 = outputs.latent_pre_l1
                 latent_post_l1 = outputs.latent_post_l1
+                cos_sim = outputs.cos_sim
                 loss_rel = outputs.loss_rel
                 loss_raw = outputs.loss_raw
                 
@@ -451,30 +452,28 @@ def stream_train(args):
             
             log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 10)))
             if wandb_run and global_step % log_every_n_steps == 0:
-                def metric_value(value):
-                    return value.item() if hasattr(value, "item") else value
-
                 log_dict = {
                     "train/loss": loss.item(),
                     "train/loss_rel": loss_rel.item(),
                     "train/loss_raw": loss_raw.item(),
                     "train/grad_norm": grad_norm_value,
+                    "train/cos_sim": cos_sim.item(),
                     "train/target_norm": tgt_norm.item(),
                     "train/latent_pre_l2": latent_pre_l2.item(),
                     "train/latent_post_l2": latent_post_l2.item(),
                     "train/latent_pre_l1": latent_pre_l1.item(),
                     "train/latent_post_l1": latent_post_l1.item(),
-                    "train/batch_mean": metric_value(outputs.batch_mean),
-                    "train/batch_var": metric_value(outputs.batch_var),
-                    "train/global_mean": metric_value(outputs.global_mean),
-                    "train/global_var": metric_value(outputs.global_var),
-                    "train/tail_fraction": metric_value(outputs.tail_fraction),
-                    "train/tail_weight_mean": metric_value(outputs.tail_weight_mean),
-                    "train/tail_weight_max": metric_value(outputs.tail_weight_max),
-                    "train/tail_base_mse": metric_value(outputs.tail_base_mse),
-                    "train/tail_weighted_mse": metric_value(outputs.tail_weighted_mse),
-                    "train/tail_region_mse": metric_value(outputs.tail_region_mse),
-                    "train/non_tail_region_mse": metric_value(outputs.non_tail_region_mse),
+                    "train/batch_mean": outputs.batch_mean.item(),
+                    "train/batch_var": outputs.batch_var.item(),
+                    "train/global_mean": outputs.global_mean.item(),
+                    "train/global_var": outputs.global_var.item(),
+                    "train/tail_fraction": outputs.tail_fraction.item(),
+                    "train/tail_weight_mean": outputs.tail_weight_mean.item(),
+                    "train/tail_weight_max": outputs.tail_weight_max.item(),
+                    "train/tail_base_mse": outputs.tail_base_mse.item(),
+                    "train/tail_weighted_mse": outputs.tail_weighted_mse.item(),
+                    "train/tail_region_mse": outputs.tail_region_mse.item(),
+                    "train/non_tail_region_mse": outputs.non_tail_region_mse.item(),
                 }
                 
                 # Legacy tracking intentionally disabled for the baseline run:
