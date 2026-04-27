@@ -535,7 +535,8 @@ class GLP(nn.Module):
         loss_raw = torch.nn.functional.mse_loss(pred_raw, tgt_raw)
 
         # cosine similarity (KEEP)
-        cos_sim = torch.nn.functional.cosine_similarity(pred_raw, tgt_raw, dim=-1).mean()
+        cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
+
 
         # --- Legacy diagnostic metrics (disabled) ---
         # These 5-step manifold/sparsity diagnostics are intentionally left in

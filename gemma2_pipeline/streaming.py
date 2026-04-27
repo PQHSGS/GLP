@@ -31,6 +31,36 @@ LOGGER = logging.getLogger(__name__)
 
 
 
+def _is_cuda_device(device: str) -> bool:
+    return str(device).startswith("cuda")
+
+
+def _get_module_device(module: torch.nn.Module) -> str:
+    for param in module.parameters():
+        return str(param.device)
+    for buffer in module.buffers():
+        return str(buffer.device)
+    return "cpu"
+
+
+def _move_model_to_device(module: torch.nn.Module, target_device: str, module_name: str) -> None:
+    target_device = str(target_device)
+    current_device = _get_module_device(module)
+    if current_device == target_device:
+        return
+    LOGGER.info("Moving %s from %s to %s.", module_name, current_device, target_device)
+    module.to(target_device)
+
+
+def _cleanup_cuda_cache() -> None:
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.empty_cache()
+    if hasattr(torch.cuda, "ipc_collect"):
+        torch.cuda.ipc_collect()
+
+
+
 
 def canonicalize_normalization_method(method: str | None) -> str:
     method = "gaussian" if method is None else str(method)
@@ -136,6 +166,18 @@ def setup_glp_model(hidden_size, args):
 
 def stream_train(args):
     device = args.device if args.device != "auto" else ("cuda:0" if torch.cuda.is_available() else "cpu")
+    offload_device = str(getattr(args, "offload_device", "cpu"))
+    phase_switch = bool(getattr(args, "phase_switch", False))
+    if phase_switch and not _is_cuda_device(device):
+        LOGGER.warning("Phase switching was enabled but training device is %s; disabling phase switch.", device)
+        phase_switch = False
+    if phase_switch and str(device) == offload_device:
+        LOGGER.warning(
+            "Phase switching requested with identical train/offload device (%s); disabling phase switch.",
+            device,
+        )
+        phase_switch = False
+
     normalization_method = canonicalize_normalization_method(
         getattr(args, "normalization_method", "gaussian")
     )
@@ -153,6 +195,7 @@ def stream_train(args):
         device=device,
         torch_dtype_name=getattr(args, "torch_dtype", "bfloat16"),
     )
+    hf_model.requires_grad_(False)
     hidden_size = int(hf_model.config.hidden_size)
     
     LOGGER.info("Setting up GLP denoiser")
@@ -280,6 +323,11 @@ def stream_train(args):
     batch_iterator = build_batch_iterator()
     
     while global_step < total_steps:
+        if phase_switch:
+            _move_model_to_device(glp_model, offload_device, "GLP model")
+            _move_model_to_device(hf_model, device, "Extractor LLM")
+            _cleanup_cuda_cache()
+
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -369,32 +417,39 @@ def stream_train(args):
             LOGGER.warning("No vectors generated in this chunk (dataset exhausted?). Halting training loop early.")
             break
 
+        normalizer_device = glp_model.normalizer.mean.device
+
         if use_gaussian_stats and stats is not None:
             mean, var = stats.finalize()
-            glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=device)
-            glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=device)
+            glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=normalizer_device)
+            glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=normalizer_device)
             LOGGER.info("Updated cumulative gaussian stats from %d vectors.", stats.count)
             
         elif use_rmsnorm_stats and second_moment_sum is not None:
             rms_sq = np.maximum(second_moment_sum / max(second_moment_count, 1), 1e-8)
-            glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=device)
-            glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=device)
+            glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=normalizer_device)
+            glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=normalizer_device)
             LOGGER.info("Updated cumulative rmsnorm stats from %d vectors.", second_moment_count)
 
         elif use_iqr_stats and iqr_median is not None and iqr_q25 is not None and iqr_q75 is not None:
             iqr = np.maximum(iqr_q75 - iqr_q25, 1e-6)
-            glp_model.normalizer.mean = torch.tensor(iqr_median, dtype=torch.float32, device=device)
-            glp_model.normalizer.var = torch.tensor(iqr * iqr, dtype=torch.float32, device=device)
+            glp_model.normalizer.mean = torch.tensor(iqr_median, dtype=torch.float32, device=normalizer_device)
+            glp_model.normalizer.var = torch.tensor(iqr * iqr, dtype=torch.float32, device=normalizer_device)
             LOGGER.info("Updated cumulative iqr stats from %d vectors.", iqr_count)
             
         elif use_quantile_stats and quantile_scale is not None:
             scale = np.maximum(quantile_scale, 1e-6)
-            glp_model.normalizer.mean = torch.tensor(stats.mean, dtype=torch.float32, device=device)
-            glp_model.normalizer.var = torch.tensor(scale * scale, dtype=torch.float32, device=device)
+            glp_model.normalizer.mean = torch.tensor(stats.mean, dtype=torch.float32, device=normalizer_device)
+            glp_model.normalizer.var = torch.tensor(scale * scale, dtype=torch.float32, device=normalizer_device)
             LOGGER.info("Updated cumulative quantile-%s stats from %d vectors.", format_quantile_percent(quantile_percent), quantile_count)
             
         else:
             LOGGER.info("Using normalization_method=%s; skipped cumulative stat updates.", normalization_method)
+
+        if phase_switch:
+            _move_model_to_device(hf_model, offload_device, "Extractor LLM")
+            _move_model_to_device(glp_model, device, "GLP model")
+            _cleanup_cuda_cache()
         
         
         train_dataset = load_activation_dataset(str(tmp_dir))

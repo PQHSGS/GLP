@@ -37,6 +37,17 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--forward-batch-size", type=int, default=collect_defaults.forward_batch_size)
     parser.add_argument("--device", default=collect_defaults.device)
     parser.add_argument(
+        "--phase-switch",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Offload the inactive model between extraction and GLP training phases to reduce peak VRAM.",
+    )
+    parser.add_argument(
+        "--offload-device",
+        default="cpu",
+        help="Device used to park the inactive model during phase switching (usually cpu).",
+    )
+    parser.add_argument(
         "--torch-dtype",
         choices=["float16", "bfloat16", "float32"],
         default=collect_defaults.torch_dtype,
@@ -82,7 +93,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     
     parser.add_argument("--save-root", default=".")
     parser.add_argument("--run-name", default="glp-stream")
-    parser.add_argument("--checkpoint-token-step", type=int, default=1000000, help="Save a checkpoint every N tokens")
+    parser.add_argument("--checkpoint-token-step", type=int, default=100000000, help="Save a checkpoint every N tokens")
     
     
     parser.add_argument("--denoiser-layers", type=int, default=train_defaults.denoiser_layers)
