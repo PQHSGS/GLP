@@ -466,6 +466,7 @@ class GLP(nn.Module):
         tail_aware_weight = float(loss_kwargs.get("tail_aware_weight", 0.0) or 0.0)
         tail_aware_min_weight = float(loss_kwargs.get("tail_aware_min_weight", 0.1) or 0.0)
         tail_aware_max_weight = float(loss_kwargs.get("tail_aware_max_weight", 10.0) or 0.0)
+        tail_aware_start = int(loss_kwargs.get("tail_aware_start", 1000) or 0)
 
         tail_fraction = outputs_f32.new_tensor(0.0)
         tail_weight_mean = outputs_f32.new_tensor(1.0)
@@ -473,7 +474,12 @@ class GLP(nn.Module):
         tail_region_mse = outputs_f32.new_tensor(0.0)
         non_tail_region_mse = outputs_f32.new_tensor(0.0)
 
-        if tail_aware_weight > 0.0:
+        tail_aware_active = (
+            tail_aware_weight > 0.0
+            and (global_step is None or int(global_step) >= tail_aware_start)
+        )
+
+        if tail_aware_active:
             with torch.no_grad():
                 raw_target = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
                 raw_magnitude = raw_target.abs()

@@ -76,6 +76,7 @@ class ModelTrainConfig:
     save_opt_state: bool = True
     normalization_method: str = "gaussian"
     tail_aware_weight: float = 0.0
+    tail_aware_start: int = 1000
     tail_aware_min_weight: float = 0.1
     tail_aware_max_weight: float = 10.0
     warmup_ratio: float = 0.01

@@ -83,6 +83,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
     parser.add_argument("--log-every-n-steps", type=int, default=train_defaults.log_every_n_steps)
     parser.add_argument("--tail-aware-weight", type=float, default=train_defaults.tail_aware_weight, help="Tail aggression alpha. 0 disables tail-aware weighting.")
+    parser.add_argument("--tail-aware-start", type=int, default=train_defaults.tail_aware_start, help="Enable tail-aware loss weighting at this optimizer step (before that: plain MSE).")
     parser.add_argument("--tail-aware-min-weight", type=float, default=train_defaults.tail_aware_min_weight, help="Minimum raw-magnitude loss multiplier.")
     parser.add_argument("--tail-aware-max-weight", type=float, default=train_defaults.tail_aware_max_weight, help="Maximum raw-magnitude loss multiplier. <=0 disables max clamping.")
     parser.add_argument("--warmup-ratio", type=float, default=train_defaults.warmup_ratio)

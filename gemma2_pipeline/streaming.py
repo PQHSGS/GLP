@@ -500,6 +500,7 @@ def stream_train(args):
 
             loss_kwargs = {
                 "tail_aware_weight": getattr(args, "tail_aware_weight", 0.0),
+                "tail_aware_start": getattr(args, "tail_aware_start", 1000),
                 "tail_aware_min_weight": getattr(args, "tail_aware_min_weight", 0.1),
                 "tail_aware_max_weight": getattr(args, "tail_aware_max_weight", 10.0),
             }
