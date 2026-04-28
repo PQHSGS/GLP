@@ -86,6 +86,12 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         default=train_defaults.sampling_method,
         help="Training noise pairing method. 'uniform' keeps random batch pairing; 'ot' uses minibatch optimal transport.",
     )
+    parser.add_argument(
+        "--ot-chunk-size",
+        type=int,
+        default=train_defaults.ot_chunk_size,
+        help="Chunk size for minibatch OT matching. Smaller chunks reduce Hungarian cost; ignored unless --sampling-method=ot.",
+    )
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
     parser.add_argument("--log-every-n-steps", type=int, default=train_defaults.log_every_n_steps)
     parser.add_argument("--tail-aware-weight", type=float, default=train_defaults.tail_aware_weight, help="Tail aggression alpha. 0 disables tail-aware weighting.")

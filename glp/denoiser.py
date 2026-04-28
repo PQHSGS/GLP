@@ -112,7 +112,17 @@ def _canonicalize_sampling_method(method):
     )
 
 
-def _match_noise_to_latents_ot(latents, noise):
+def _canonicalize_ot_chunk_size(chunk_size):
+    if chunk_size is None:
+        return 256
+
+    chunk_size = int(chunk_size)
+    if chunk_size <= 0:
+        raise ValueError(f"ot_chunk_size must be > 0, got {chunk_size}.")
+    return chunk_size
+
+
+def _match_noise_to_latents_ot(latents, noise, *, chunk_size=256):
     if latents.shape != noise.shape:
         raise ValueError(
             f"Latents/noise shape mismatch for OT sampling: {latents.shape} vs {noise.shape}."
@@ -126,17 +136,30 @@ def _match_noise_to_latents_ot(latents, noise):
     if batch_size < 2:
         return noise
 
+    chunk_size = _canonicalize_ot_chunk_size(chunk_size)
+
     # Match whole sequences per batch item, not individual tokens. This keeps
     # Hungarian complexity at O(batch^3) instead of O((batch * seq)^3).
     flat_latents = latents.detach().reshape(batch_size, -1).float()
-    flat_noise = noise.detach().reshape(batch_size, -1).float()
-    cost_matrix = torch.cdist(flat_latents, flat_noise)
-    _, col_ind = linear_sum_assignment(cost_matrix.cpu().numpy())
-    matched_index = torch.as_tensor(col_ind, device=noise.device, dtype=torch.long)
-    return noise.index_select(0, matched_index)
+    flat_noise_for_cost = noise.detach().reshape(batch_size, -1).float()
+    flat_noise = noise.reshape(batch_size, -1)
+    reordered_noise_chunks = []
+
+    for start_idx in range(0, batch_size, chunk_size):
+        end_idx = min(start_idx + chunk_size, batch_size)
+        chunk_latents = flat_latents[start_idx:end_idx]
+        chunk_noise_for_cost = flat_noise_for_cost[start_idx:end_idx]
+        chunk_noise = flat_noise[start_idx:end_idx]
+        cost_matrix = torch.cdist(chunk_latents, chunk_noise_for_cost)
+        _, col_ind = linear_sum_assignment(cost_matrix.cpu().numpy())
+        matched_index = torch.as_tensor(col_ind, device=noise.device, dtype=torch.long)
+        reordered_noise_chunks.append(chunk_noise.index_select(0, matched_index))
+
+    optimized_flat_noise = torch.cat(reordered_noise_chunks, dim=0)
+    return optimized_flat_noise.reshape_as(noise)
 
 
-def _sample_training_noise(latents, *, generator=None, sampling_method="uniform"):
+def _sample_training_noise(latents, *, generator=None, sampling_method="uniform", ot_chunk_size=256):
     sampling_method = _canonicalize_sampling_method(sampling_method)
     noise = torch.randn(
         latents.shape,
@@ -146,7 +169,7 @@ def _sample_training_noise(latents, *, generator=None, sampling_method="uniform"
     )
 
     if sampling_method == "ot":
-        return _match_noise_to_latents_ot(latents, noise)
+        return _match_noise_to_latents_ot(latents, noise, chunk_size=ot_chunk_size)
 
     return noise
 
@@ -446,6 +469,7 @@ class GLP(nn.Module):
         denoiser_config,
         tracedict_config=None,
         sampling_method="uniform",
+        ot_chunk_size=256,
     ):
         super().__init__()
         self.normalizer = Normalizer.from_config(**normalizer_config)
@@ -453,6 +477,7 @@ class GLP(nn.Module):
         self.scheduler = flow_matching.fm_scheduler()
         self.tracedict_config = tracedict_config
         self.sampling_method = _canonicalize_sampling_method(sampling_method)
+        self.ot_chunk_size = _canonicalize_ot_chunk_size(ot_chunk_size)
 
     def save_pretrained(self, path, name=None):
         path = Path(path)
@@ -505,6 +530,7 @@ class GLP(nn.Module):
             latents,
             generator=generator,
             sampling_method=self.sampling_method,
+            ot_chunk_size=self.ot_chunk_size,
         )
         noisy_latents, target, timesteps, meta = flow_matching.fm_prepare(
             self.scheduler,

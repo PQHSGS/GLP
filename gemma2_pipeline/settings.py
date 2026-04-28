@@ -76,6 +76,7 @@ class ModelTrainConfig:
     save_opt_state: bool = True
     normalization_method: str = "gaussian"
     sampling_method: str = "uniform"
+    ot_chunk_size: int = 256
     tail_aware_weight: float = 0.0
     tail_aware_start: int = 1000
     tail_aware_min_weight: float = 0.1
