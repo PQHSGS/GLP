@@ -117,11 +117,17 @@ def _match_noise_to_latents_ot(latents, noise):
         raise ValueError(
             f"Latents/noise shape mismatch for OT sampling: {latents.shape} vs {noise.shape}."
         )
+    if latents.ndim != 3:
+        raise ValueError(
+            f"OT sampling expects sequence-shaped latents with shape (batch, seq, dim), got {latents.shape}."
+        )
 
     batch_size = latents.shape[0]
     if batch_size < 2:
         return noise
 
+    # Match whole sequences per batch item, not individual tokens. This keeps
+    # Hungarian complexity at O(batch^3) instead of O((batch * seq)^3).
     flat_latents = latents.detach().reshape(batch_size, -1).float()
     flat_noise = noise.detach().reshape(batch_size, -1).float()
     cost_matrix = torch.cdist(flat_latents, flat_noise)
@@ -143,6 +149,7 @@ def _sample_training_noise(latents, *, generator=None, sampling_method="uniform"
         return _match_noise_to_latents_ot(latents, noise)
 
     return noise
+
 
 # ==========================
 #     Normalizer Class
@@ -541,26 +548,28 @@ class GLP(nn.Module):
         tail_region_mse = outputs_f32.new_tensor(0.0)
         non_tail_region_mse = outputs_f32.new_tensor(0.0)
 
-        tail_aware_active = (
-            tail_aware_weight > 0.0
-            and (global_step is None or int(global_step) >= tail_aware_start)
-        )
-
-        if tail_aware_active:
+        if tail_aware_weight > 0.0:
             with torch.no_grad():
                 raw_target = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
                 raw_magnitude = raw_target.abs()
                 batch_mean_mag = raw_magnitude.mean(dim=-1, keepdim=True).clamp_min(1e-8)
-                tail_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
-                tail_weight_mean = tail_multiplier.mean()
-                tail_weight_max = tail_multiplier.max()
+                full_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
                 if tail_aware_min_weight > 0.0 or tail_aware_max_weight > 0.0:
                     clamp_kwargs = {}
                     if tail_aware_min_weight > 0.0:
                         clamp_kwargs["min"] = tail_aware_min_weight
                     if tail_aware_max_weight > 0.0:
                         clamp_kwargs["max"] = tail_aware_max_weight
-                    tail_multiplier = tail_multiplier.clamp(**clamp_kwargs)
+                    full_multiplier = full_multiplier.clamp(**clamp_kwargs)
+
+                if global_step is not None and tail_aware_start > 0 and global_step < tail_aware_start:
+                    blend_factor = float(global_step) / float(tail_aware_start)
+                else:
+                    blend_factor = 1.0
+
+                tail_multiplier = 1.0 + (full_multiplier - 1.0) * blend_factor
+                tail_weight_mean = tail_multiplier.mean()
+                tail_weight_max = tail_multiplier.max()
                 tail_mask = tail_multiplier > 1.0
                 tail_fraction = tail_mask.float().mean()
 
@@ -706,7 +715,6 @@ class GLP(nn.Module):
             loss_rel=loss_rel,
             loss_raw=loss_raw,
             cos_sim=cos_sim,
-            tail_aware_weight=tail_aware_weight,
             tail_aware_min_weight=tail_aware_min_weight,
             tail_aware_max_weight=tail_aware_max_weight,
             tail_fraction=tail_fraction,

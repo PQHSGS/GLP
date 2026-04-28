@@ -11,6 +11,13 @@ class SamplingMethodTests(unittest.TestCase):
         self.assertEqual(denoiser._canonicalize_sampling_method(None), "uniform")
         self.assertEqual(denoiser._canonicalize_sampling_method("OT"), "ot")
 
+    def test_ot_sampling_requires_sequence_shaped_latents(self):
+        latents = torch.tensor([[0.0], [10.0]], dtype=torch.float32)
+        noise = torch.tensor([[9.0], [1.0]], dtype=torch.float32)
+
+        with self.assertRaises(ValueError):
+            denoiser._match_noise_to_latents_ot(latents, noise)
+
     def test_ot_sampling_reorders_noise_using_min_cost_assignment(self):
         latents = torch.tensor([[[0.0]], [[10.0]]], dtype=torch.float32)
         noise = torch.tensor([[[9.0]], [[1.0]]], dtype=torch.float32)
