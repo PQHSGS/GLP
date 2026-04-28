@@ -156,6 +156,7 @@ def setup_glp_model(hidden_size, args):
             "multi_layer_n_layers": None,
             "use_spectral_norm": getattr(args, "use_spectral_norm", False),
         },
+        sampling_method=getattr(args, "sampling_method", "uniform"),
         tracedict_config={
             "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
             "layers": [args.layer],
@@ -306,6 +307,7 @@ def stream_train(args):
                     "multi_layer_n_layers": None,
                     "use_spectral_norm": getattr(args, "use_spectral_norm", False),
                 },
+                "sampling_method": getattr(args, "sampling_method", "uniform"),
                 "tracedict_config": {
                     "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
                     "layers": [args.layer],

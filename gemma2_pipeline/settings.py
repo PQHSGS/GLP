@@ -75,6 +75,7 @@ class ModelTrainConfig:
     log_every_n_steps: int = 10
     save_opt_state: bool = True
     normalization_method: str = "gaussian"
+    sampling_method: str = "uniform"
     tail_aware_weight: float = 0.0
     tail_aware_start: int = 1000
     tail_aware_min_weight: float = 0.1

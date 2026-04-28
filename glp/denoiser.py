@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 import os
 from pathlib import Path
 from safetensors.torch import load_file, save_file
+from scipy.optimize import linear_sum_assignment
 import torch
 import torch.nn as nn
 from torch.nn.utils.parametrizations import spectral_norm
@@ -86,6 +87,62 @@ def _format_quantile_percent(value):
 
 def _normalization_requires_stats(method):
     return _canonicalize_normalization_method(method) != "log_norm"
+
+
+def _canonicalize_sampling_method(method):
+    if method is None:
+        return "uniform"
+
+    method = str(method).strip().lower().replace("-", "_")
+    aliases = {
+        "default": "uniform",
+        "rand": "uniform",
+        "random": "uniform",
+        "optimal_transport": "ot",
+        "hungarian": "ot",
+    }
+    method = aliases.get(method, method)
+
+    if method in {"uniform", "ot"}:
+        return method
+
+    raise ValueError(
+        f"Unsupported sampling_method '{method}'. "
+        "Expected one of ['uniform', 'ot']."
+    )
+
+
+def _match_noise_to_latents_ot(latents, noise):
+    if latents.shape != noise.shape:
+        raise ValueError(
+            f"Latents/noise shape mismatch for OT sampling: {latents.shape} vs {noise.shape}."
+        )
+
+    batch_size = latents.shape[0]
+    if batch_size < 2:
+        return noise
+
+    flat_latents = latents.detach().reshape(batch_size, -1).float()
+    flat_noise = noise.detach().reshape(batch_size, -1).float()
+    cost_matrix = torch.cdist(flat_latents, flat_noise)
+    _, col_ind = linear_sum_assignment(cost_matrix.cpu().numpy())
+    matched_index = torch.as_tensor(col_ind, device=noise.device, dtype=torch.long)
+    return noise.index_select(0, matched_index)
+
+
+def _sample_training_noise(latents, *, generator=None, sampling_method="uniform"):
+    sampling_method = _canonicalize_sampling_method(sampling_method)
+    noise = torch.randn(
+        latents.shape,
+        device=latents.device,
+        dtype=latents.dtype,
+        generator=generator,
+    )
+
+    if sampling_method == "ot":
+        return _match_noise_to_latents_ot(latents, noise)
+
+    return noise
 
 # ==========================
 #     Normalizer Class
@@ -376,12 +433,19 @@ class Denoiser(nn.Module):
 #    GLP Wrapper Class
 # ==========================
 class GLP(nn.Module):
-    def __init__(self, normalizer_config, denoiser_config, tracedict_config=None):
+    def __init__(
+        self,
+        normalizer_config,
+        denoiser_config,
+        tracedict_config=None,
+        sampling_method="uniform",
+    ):
         super().__init__()
         self.normalizer = Normalizer.from_config(**normalizer_config)
         self.denoiser = Denoiser(**denoiser_config)
         self.scheduler = flow_matching.fm_scheduler()
         self.tracedict_config = tracedict_config
+        self.sampling_method = _canonicalize_sampling_method(sampling_method)
 
     def save_pretrained(self, path, name=None):
         path = Path(path)
@@ -413,7 +477,6 @@ class GLP(nn.Module):
         self.scheduler.set_timesteps(self.scheduler.config.num_train_timesteps)
         u = torch.full((latents.shape[0],), u, device=latents.device) if isinstance(u, float) else u
 
-        phase = 2
         # Legacy two-phase schedule. Disabled while returning to the baseline
         # Flow Matching setup: plain MSE with uniformly sampled u.
         # if two_phase and global_step is not None and total_steps is not None:
@@ -431,7 +494,11 @@ class GLP(nn.Module):
             u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
 
         # prepare flow matching inputs and target
-        noise = torch.randn(latents.shape, dtype=latents.dtype, generator=generator).to(latents.device)
+        noise = _sample_training_noise(
+            latents,
+            generator=generator,
+            sampling_method=self.sampling_method,
+        )
         noisy_latents, target, timesteps, meta = flow_matching.fm_prepare(
             self.scheduler,
             latents,
