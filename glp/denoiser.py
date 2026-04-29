@@ -573,13 +573,17 @@ class GLP(nn.Module):
         tail_weight_max = outputs_f32.new_tensor(1.0)
         tail_region_mse = outputs_f32.new_tensor(0.0)
         non_tail_region_mse = outputs_f32.new_tensor(0.0)
-
+        with torch.no_grad():
+            raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
+            tail_mask = None
+        
         if tail_aware_weight > 0.0:
             with torch.no_grad():
-                raw_target = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
-                raw_magnitude = raw_target.abs()
+                raw_magnitude = raw_latents.abs()
                 batch_mean_mag = raw_magnitude.mean(dim=-1, keepdim=True).clamp_min(1e-8)
                 full_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
+                tail_weight_mean = full_multiplier.mean()
+                tail_weight_max = full_multiplier.max()
                 if tail_aware_min_weight > 0.0 or tail_aware_max_weight > 0.0:
                     clamp_kwargs = {}
                     if tail_aware_min_weight > 0.0:
@@ -594,16 +598,8 @@ class GLP(nn.Module):
                     blend_factor = 1.0
 
                 tail_multiplier = 1.0 + (full_multiplier - 1.0) * blend_factor
-                tail_weight_mean = tail_multiplier.mean()
-                tail_weight_max = tail_multiplier.max()
                 tail_mask = tail_multiplier > 1.0
                 tail_fraction = tail_mask.float().mean()
-
-                if tail_mask.any():
-                    tail_region_mse = mse_element.detach()[tail_mask].mean()
-                non_tail_mask = ~tail_mask
-                if non_tail_mask.any():
-                    non_tail_region_mse = mse_element.detach()[non_tail_mask].mean()
             loss_unreduced = (mse_element * tail_multiplier.to(mse_element.dtype)).view(latents.shape[0], -1).mean(dim=-1)
         loss = loss_unreduced.mean()
         tail_weighted_mse = loss.detach()
@@ -618,7 +614,9 @@ class GLP(nn.Module):
         # loss = loss_unreduced.mean()
 
         # ===== proper metrics =====
-        raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).view(-1, latents.shape[-1])
+        if tail_mask is not None:
+            tail_mask = tail_mask.view(-1, tail_mask.shape[-1])
+        raw_latents = raw_latents.view(-1, latents.shape[-1])
 
         # relative squared error  
         pred = outputs.view(-1, outputs.shape[-1])
@@ -630,7 +628,6 @@ class GLP(nn.Module):
         post_l2_std = latent_post_l2.std().item()
         latent_pre_l1 = raw_latents.norm(dim=-1, keepdim=True, p=1) + 1e-6
         latent_post_l1 = latents.norm(dim=-1, keepdim=True, p=1) + 1e-6
-        weights = 1.0 / tgt_norm
         tgt_norm_sq = (tgt ** 2).sum(dim=-1) + 1e-8
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
         loss_rel = loss_rel.mean()
@@ -640,7 +637,19 @@ class GLP(nn.Module):
         tgt_raw  = self.normalizer.denormalize(tgt, layer_idx)
 
         # raw-space MSE (THIS is comparable across normalization)
-        loss_raw = torch.nn.functional.mse_loss(pred_raw, tgt_raw)
+        if tail_mask is None:
+            loss_raw = torch.nn.functional.mse_loss(pred_raw, tgt_raw)
+            non_tail_region_mse = loss_raw.detach()
+        else:
+            loss_raw_element = torch.nn.functional.mse_loss(pred_raw, tgt_raw, reduction='none')
+            loss_raw = loss_raw_element.mean()
+            loss_raw_element = loss_raw_element.detach()
+
+            if tail_mask.any():
+                tail_region_mse = loss_raw_element[tail_mask].mean()
+            non_tail_mask = ~tail_mask
+            if non_tail_mask.any():
+                non_tail_region_mse = loss_raw_element[non_tail_mask].mean()
 
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
@@ -657,63 +666,63 @@ class GLP(nn.Module):
         dead_ratio, hoyer_sparsity = 0.0, 0.0
         loss_early, loss_mid, loss_late = 0.0, 0.0, 0.0
         
-        if False and calc_metrics:
-            with torch.no_grad():
-                # --- Timestep Loss Mask ---
-                # Calculate raw loss per batch item
-                u_flat = meta["u"].view(-1).to(device=pred.device)
+        # if False and calc_metrics:
+        #     with torch.no_grad():
+        #         # --- Timestep Loss Mask ---
+        #         # Calculate raw loss per batch item
+        #         u_flat = meta["u"].view(-1).to(device=pred.device)
                 
-                mask_early = u_flat < 0.3
-                mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
-                mask_late = u_flat > 0.7
+        #         mask_early = u_flat < 0.3
+        #         mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
+        #         mask_late = u_flat > 0.7
                 
-                loss_early = loss_unreduced[mask_early].mean().item() if mask_early.any() else 0.0
-                loss_mid = loss_unreduced[mask_mid].mean().item() if mask_mid.any() else 0.0
-                loss_late = loss_unreduced[mask_late].mean().item() if mask_late.any() else 0.0
+        #         loss_early = loss_unreduced[mask_early].mean().item() if mask_early.any() else 0.0
+        #         loss_mid = loss_unreduced[mask_mid].mean().item() if mask_mid.any() else 0.0
+        #         loss_late = loss_unreduced[mask_late].mean().item() if mask_late.any() else 0.0
 
-                # --- Manifold Spectral Measurements ---
-                X = latents.view(-1, latents.shape[-1]).float()
+        #         # --- Manifold Spectral Measurements ---
+        #         X = latents.view(-1, latents.shape[-1]).float()
                 
-                X_centered = X - X.mean(dim=0)
-                s = torch.linalg.svdvals(X_centered)
+        #         X_centered = X - X.mean(dim=0)
+        #         s = torch.linalg.svdvals(X_centered)
                 
-                # Robust Noise Floor Handling
-                s_max = s[0]
-                s_clean = s[s > (s_max * 1e-6)] 
-                lambdas = s_clean ** 2
-                sum_lambdas = lambdas.sum()
+        #         # Robust Noise Floor Handling
+        #         s_max = s[0]
+        #         s_clean = s[s > (s_max * 1e-6)] 
+        #         lambdas = s_clean ** 2
+        #         sum_lambdas = lambdas.sum()
                 
-                # 1. Participation Ratio (PR)
-                PR = (sum_lambdas ** 2) / (lambdas ** 2).sum()
+        #         # 1. Participation Ratio (PR)
+        #         PR = (sum_lambdas ** 2) / (lambdas ** 2).sum()
                 
-                # 2. Spectral Entropy (H_SVD)
-                p = lambdas / (sum_lambdas + 1e-9)
-                H_SVD = -torch.sum(p * torch.log(p + 1e-9))
+        #         # 2. Spectral Entropy (H_SVD)
+        #         p = lambdas / (sum_lambdas + 1e-9)
+        #         H_SVD = -torch.sum(p * torch.log(p + 1e-9))
                 
-                # 3. Truncated Condition Number (kappa)
-                ref_idx = min(63, len(s) - 1)
-                kappa = s[0] / (s[ref_idx] + 1e-9)
+        #         # 3. Truncated Condition Number (kappa)
+        #         ref_idx = min(63, len(s) - 1)
+        #         kappa = s[0] / (s[ref_idx] + 1e-9)
                 
-                # 4. Dimension for 99% Variance (k_99)
-                cum_var = torch.cumsum(lambdas, dim=0) / sum_lambdas
-                k_99 = (cum_var < 0.99).sum().float()
+        #         # 4. Dimension for 99% Variance (k_99)
+        #         cum_var = torch.cumsum(lambdas, dim=0) / sum_lambdas
+        #         k_99 = (cum_var < 0.99).sum().float()
 
-                # --- Polysemantic/Sparsity Measurements ---
-                X_raw = raw_latents.float()
-                D = X_raw.shape[-1]
+        #         # --- Polysemantic/Sparsity Measurements ---
+        #         X_raw = raw_latents.float()
+        #         D = X_raw.shape[-1]
                 
-                # 1. Dead Ratio (What % is functionally zero?)
-                is_active = (X_raw.abs() > 1e-3).float()
-                active_ratio = is_active.mean()
-                dead_ratio = 1.0 - active_ratio
+        #         # 1. Dead Ratio (What % is functionally zero?)
+        #         is_active = (X_raw.abs() > 1e-3).float()
+        #         active_ratio = is_active.mean()
+        #         dead_ratio = 1.0 - active_ratio
                 
-                # 2. Hoyer Sparsity (Scale-Invariant Concentration)
-                l1_norm = X_raw.abs().sum(dim=-1)
-                l2_norm = torch.linalg.vector_norm(X_raw, dim=-1)
+        #         # 2. Hoyer Sparsity (Scale-Invariant Concentration)
+        #         l1_norm = X_raw.abs().sum(dim=-1)
+        #         l2_norm = torch.linalg.vector_norm(X_raw, dim=-1)
                 
-                sqrt_d = math.sqrt(D)
-                hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
-                hoyer_sparsity = hoyer.mean()
+        #         sqrt_d = math.sqrt(D)
+        #         hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
+        #         hoyer_sparsity = hoyer.mean()
 
         # --- Normalizer Stats ---
         batch_mean = raw_latents.mean()

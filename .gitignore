@@ -19,6 +19,6 @@ scripts/
 # OS/editor
 .DS_Store
 Thumbs.db
-20m/
-gpt2/
+ot_gauss/
+med_gauss/
 glp_train.ipynb
