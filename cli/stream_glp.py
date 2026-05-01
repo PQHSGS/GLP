@@ -63,7 +63,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     # Dataset args
     parser.add_argument("--dataset-name", default=source_defaults.dataset_name)
     parser.add_argument("--dataset-config", default=source_defaults.dataset_config)
-    parser.add_argument("--split", default=source_defaults.split)
+    parser.add_argument("--dataset-split", default=source_defaults.split, help="Dataset split to stream from.")
     parser.add_argument("--text-field", default=source_defaults.text_field)
     parser.add_argument("--max-documents", type=int, default=source_defaults.max_documents, help="Stop streaming texts after reading this many documents")
     
@@ -92,6 +92,18 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         default=train_defaults.ot_chunk_size,
         help="Chunk size for minibatch OT matching. Smaller chunks reduce Hungarian cost; ignored unless --sampling-method=ot.",
     )
+    parser.add_argument(
+        "--split",
+        action=argparse.BooleanOptionalAction,
+        default=train_defaults.split,
+        help="Use separate denoiser output heads for top-variance dimensions and remaining dimensions.",
+    )
+    parser.add_argument(
+        "--split-proportion",
+        type=float,
+        default=train_defaults.split_proportion,
+        help="Proportion of highest-variance dimensions routed through the split tail output head.",
+    )
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
     parser.add_argument("--log-every-n-steps", type=int, default=train_defaults.log_every_n_steps)
     parser.add_argument("--tail-aware-weight", type=float, default=train_defaults.tail_aware_weight, help="Tail aggression alpha. 0 disables tail-aware weighting.")
@@ -103,6 +115,8 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--final-factor", type=float, default=train_defaults.final_factor)
     parser.add_argument("--use-bf16", action=argparse.BooleanOptionalAction, default=train_defaults.use_bf16)
     parser.add_argument("--shuffle", action=argparse.BooleanOptionalAction, default=train_defaults.shuffle)
+    parser.add_argument("--init-ckpt", default=train_defaults.init_ckpt, help="Optional local checkpoint folder or Hugging Face repo id/subfolder to initialize/finetune from.")
+    parser.add_argument("--load-opt", action=argparse.BooleanOptionalAction, default=train_defaults.load_opt, help="Load optimizer/scheduler state from init checkpoint when opt.pt exists.")
     
     parser.add_argument("--save-root", default=".")
     parser.add_argument("--run-name", default="glp-stream")
@@ -112,13 +126,6 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--denoiser-layers", type=int, default=train_defaults.denoiser_layers)
     parser.add_argument("--d-model-mult", type=int, default=d_model_mult_default)
     parser.add_argument("--d-mlp-mult", type=int, default=d_mlp_mult_default)
-    parser.add_argument(
-        "--spectral-norm",
-        dest="use_spectral_norm",
-        action=argparse.BooleanOptionalAction,
-        default=train_defaults.use_spectral_norm,
-        help="Apply spectral normalization to GLP denoiser projection layers.",
-    )
     
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=train_defaults.wandb_enabled)
     parser.add_argument("--wandb-project", default=train_defaults.wandb_project)

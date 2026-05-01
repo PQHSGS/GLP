@@ -11,7 +11,6 @@ from safetensors.torch import load_file, save_file
 from scipy.optimize import linear_sum_assignment
 import torch
 import torch.nn as nn
-from torch.nn.utils.parametrizations import spectral_norm
 from types import SimpleNamespace
 
 try:
@@ -291,13 +290,6 @@ class Normalizer(nn.Module):
             path / f"rep_statistics.pt",
         )
 
-# ==========================
-#     Denoiser Classes
-# ==========================
-def maybe_spectral_norm(layer, enabled=False):
-    return spectral_norm(layer, n_power_iterations=1) if enabled else layer
-
-
 def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
     """
     Create sinusoidal timestep embeddings.    
@@ -322,17 +314,16 @@ class TransformerMLPBlock(nn.Module):
         d_model,
         d_mlp,
         d_input,
-        use_spectral_norm=False,
     ):
         super().__init__()
         self.d_model = d_model
         self.d_mlp = d_mlp
         self.d_input = d_input
 
-        self.up_proj = maybe_spectral_norm(nn.Linear(d_model, d_mlp), use_spectral_norm)
-        self.down_proj = maybe_spectral_norm(nn.Linear(d_mlp, d_model), use_spectral_norm)
-        self.gate_proj = maybe_spectral_norm(nn.Linear(d_model, d_mlp), use_spectral_norm)
-        self.time_proj = maybe_spectral_norm(nn.Linear(d_model, d_mlp), use_spectral_norm)
+        self.up_proj = nn.Linear(d_model, d_mlp)
+        self.down_proj = nn.Linear(d_mlp, d_model)
+        self.gate_proj = nn.Linear(d_model, d_mlp)
+        self.time_proj = nn.Linear(d_model, d_mlp)
         self.act = nn.SiLU()
         self.ln = nn.LayerNorm(d_model)
 
@@ -352,6 +343,58 @@ class TransformerMLPBlock(nn.Module):
         x = self.down_proj(x)
         return x + resid_x
 
+
+def _normalize_tail_indices(tail_indices, d_input):
+    if tail_indices is None:
+        return []
+
+    if torch.is_tensor(tail_indices):
+        tail_indices = tail_indices.detach().cpu().tolist()
+
+    tail_indices = [int(idx) for idx in tail_indices]
+    if len(set(tail_indices)) != len(tail_indices):
+        raise ValueError("split_tail_indices contains duplicate indices.")
+
+    invalid_indices = [idx for idx in tail_indices if idx < 0 or idx >= d_input]
+    if invalid_indices:
+        raise ValueError(
+            f"split_tail_indices contains out-of-range indices for d_input={d_input}: "
+            f"{invalid_indices[:10]}"
+        )
+
+    return sorted(tail_indices)
+
+
+class SplitOutputProj(nn.Module):
+    def __init__(self, d_model, d_input, tail_indices):
+        super().__init__()
+        tail_indices = _normalize_tail_indices(tail_indices, d_input)
+        if not (0 < len(tail_indices) < d_input):
+            raise ValueError(
+                f"SplitOutputProj requires 0 < len(tail_indices) < d_input, "
+                f"got {len(tail_indices)} for d_input={d_input}."
+            )
+
+        tail_indices = torch.tensor(tail_indices, dtype=torch.long)
+        mask = torch.ones(d_input, dtype=torch.bool)
+        mask[tail_indices] = False
+
+        self.d_model = d_model
+        self.d_input = d_input
+        self.register_buffer("tail_indices", tail_indices, persistent=False)
+        self.register_buffer("nontail_indices", torch.arange(d_input)[mask], persistent=False)
+        self.tail_proj = nn.Linear(d_model, int(self.tail_indices.numel()))
+        self.nontail_proj = nn.Linear(d_model, int(self.nontail_indices.numel()))
+
+    def forward(self, x):
+        tail_out = self.tail_proj(x)
+        nontail_out = self.nontail_proj(x)
+        out = tail_out.new_empty(*x.shape[:-1], self.d_input)
+        out[..., self.tail_indices] = tail_out
+        out[..., self.nontail_indices] = nontail_out
+        return out
+
+
 class TransformerMLPDenoiser(nn.Module):
     def __init__(
         self,
@@ -360,6 +403,8 @@ class TransformerMLPDenoiser(nn.Module):
         d_input=1536,
         n_layers=12,
         multi_layer_n_layers=None,
+        split=False,
+        split_tail_indices=None,
         use_spectral_norm=False,
     ):
         super().__init__()
@@ -368,17 +413,20 @@ class TransformerMLPDenoiser(nn.Module):
         self.d_input = d_input
         self.n_layers = n_layers
         self.multi_layer_n_layers = multi_layer_n_layers
+        self.split = False
+        self.split_tail_indices = []
 
         self.layers = nn.ModuleList([
             TransformerMLPBlock(
                 d_model=d_model,
                 d_mlp=d_mlp,
                 d_input=d_input,
-                use_spectral_norm=use_spectral_norm,
             ) for _ in range(n_layers)
         ])
-        self.in_proj = maybe_spectral_norm(nn.Linear(d_input, d_model), use_spectral_norm)
-        self.out_proj = maybe_spectral_norm(nn.Linear(d_model, d_input), use_spectral_norm)
+        self.in_proj = nn.Linear(d_input, d_model)
+        self.out_proj = nn.Linear(d_model, d_input)
+        if split:
+            self.configure_split_output(split_tail_indices)
 
         self.time_embed = nn.Sequential(
             nn.Linear(d_model, d_model),
@@ -395,6 +443,27 @@ class TransformerMLPDenoiser(nn.Module):
         else:
             self.layer_embed = nn.Identity()
         self.ln = nn.LayerNorm(d_model)
+
+    def configure_split_output(self, tail_indices):
+        tail_indices = _normalize_tail_indices(tail_indices, self.d_input)
+        use_split = 0 < len(tail_indices) < self.d_input
+
+        ref_param = next(self.parameters(), None)
+        device = ref_param.device if ref_param is not None else None
+        dtype = ref_param.dtype if ref_param is not None else None
+
+        if use_split:
+            out_proj = SplitOutputProj(self.d_model, self.d_input, tail_indices)
+        else:
+            out_proj = nn.Linear(self.d_model, self.d_input)
+
+        if device is not None:
+            out_proj = out_proj.to(device=device, dtype=dtype)
+
+        self.out_proj = out_proj
+        self.split = use_split
+        self.split_tail_indices = tail_indices if use_split else []
+        return self.split_tail_indices
 
     def forward(self, latents, timesteps, layer_idx=None, **kwargs):
         assert latents.ndim == 2, f"Expected (batch, dim), got shape {latents.shape}"
@@ -426,6 +495,12 @@ class Denoiser(nn.Module):
         super().__init__()
         self.model = TransformerMLPDenoiser(**kwargs)
         self.device, self.dtype = None, None
+
+    def configure_split_output(self, tail_indices):
+        resolved_indices = self.model.configure_split_output(tail_indices)
+        if self.device is not None:
+            self.model.out_proj.to(device=self.device, dtype=self.dtype)
+        return resolved_indices
 
     def forward(self, latents, layer_idx=None, **kwargs):
         layer_idx = torch.full((latents.shape[0],), layer_idx, device=latents.device) if isinstance(layer_idx, int) else layer_idx
@@ -478,6 +553,39 @@ class GLP(nn.Module):
         self.tracedict_config = tracedict_config
         self.sampling_method = _canonicalize_sampling_method(sampling_method)
         self.ot_chunk_size = _canonicalize_ot_chunk_size(ot_chunk_size)
+
+    def configure_split_output_from_normalizer(self, proportion=0.1):
+        proportion = float(proportion)
+        if not (0.0 < proportion < 1.0):
+            raise ValueError(f"split_proportion must be in (0, 1), got {proportion}.")
+        if not _normalization_requires_stats(self.normalizer.normalization_method):
+            raise ValueError(
+                f"Automatic split-output detection requires normalization statistics; "
+                f"got normalization_method='{self.normalizer.normalization_method}'."
+            )
+
+        var = self.normalizer.var.detach().float()
+        if var.ndim == 2:
+            if var.shape[0] != 1:
+                raise ValueError(
+                    "Automatic split-output detection only supports single-layer normalization stats."
+                )
+            var = var[0]
+        elif var.ndim != 1:
+            var = var.reshape(-1)
+
+        d_input = self.denoiser.model.d_input
+        if var.numel() != d_input:
+            raise ValueError(
+                f"Normalizer variance shape does not match denoiser d_input: {var.numel()} vs {d_input}."
+            )
+        if d_input < 2:
+            raise ValueError("Split output projection requires d_input >= 2.")
+
+        num_tail_dims = max(1, int(round(d_input * proportion)))
+        num_tail_dims = min(num_tail_dims, d_input - 1)
+        tail_indices = torch.topk(var, k=num_tail_dims, largest=True).indices.sort().values
+        return self.denoiser.configure_split_output(tail_indices)
 
     def save_pretrained(self, path, name=None):
         path = Path(path)
@@ -558,8 +666,8 @@ class GLP(nn.Module):
             target_f32,
             reduction='none',
         )
-        if self.normalizer.normalization_method == "log_norm":
-            mse_element = mse_element * 1e5
+        # if self.normalizer.normalization_method == "log_norm":
+        #     mse_element = mse_element * 1e5
 
         loss_unreduced = mse_element.view(latents.shape[0], -1).mean(dim=-1)
         tail_base_mse = loss_unreduced.detach().mean()
@@ -601,8 +709,8 @@ class GLP(nn.Module):
                 tail_mask = tail_multiplier > 1.0
                 tail_fraction = tail_mask.float().mean()
             loss_unreduced = (mse_element * tail_multiplier.to(mse_element.dtype)).view(latents.shape[0], -1).mean(dim=-1)
+        tail_weighted_mse = loss_unreduced.detach().mean()
         loss = loss_unreduced.mean()
-        tail_weighted_mse = loss.detach()
 
         # Legacy phase-2 pseudo-Huber objective. Kept for future experiments.
         # u_t = meta["u"].to(device=outputs.device, dtype=torch.float32).view(-1, 1, 1)

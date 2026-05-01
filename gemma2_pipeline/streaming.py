@@ -6,6 +6,8 @@ import sys
 
 import numpy as np
 import torch
+from huggingface_hub import snapshot_download
+from omegaconf import OmegaConf
 from tqdm import tqdm
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -28,6 +30,8 @@ from .stats import RunningMoments, save_rep_statistics
 from .settings import FineWebSourceConfig
 
 LOGGER = logging.getLogger(__name__)
+
+CHECKPOINT_FILES = ("config.yaml", "rep_statistics.pt", "final.safetensors", "opt.pt")
 
 
 
@@ -154,7 +158,6 @@ def setup_glp_model(hidden_size, args):
             "d_mlp": d_mlp,
             "n_layers": args.denoiser_layers,
             "multi_layer_n_layers": None,
-            "use_spectral_norm": getattr(args, "use_spectral_norm", False),
         },
         sampling_method=getattr(args, "sampling_method", "uniform"),
         ot_chunk_size=getattr(args, "ot_chunk_size", 256),
@@ -164,6 +167,63 @@ def setup_glp_model(hidden_size, args):
             "retain": args.retain,
         }
     )
+    return model
+
+
+def resolve_init_checkpoint(init_ckpt):
+    if not init_ckpt:
+        return None
+
+    resolved = Path(init_ckpt).expanduser()
+    if not resolved.exists():
+        repo_id, subfolder = split_hf_checkpoint_ref(init_ckpt)
+        allow_patterns = [
+            f"{subfolder}/{name}" if subfolder else name
+            for name in CHECKPOINT_FILES
+        ]
+        resolved = Path(snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=allow_patterns,
+        ))
+        if subfolder:
+            resolved = resolved / subfolder
+
+    return resolved
+
+
+def split_hf_checkpoint_ref(checkpoint_ref):
+    parts = checkpoint_ref.strip("/").split("/")
+    if len(parts) <= 2:
+        return checkpoint_ref, ""
+    return "/".join(parts[:2]), "/".join(parts[2:])
+
+
+def setup_init_glp_model(init_dir, hidden_size, args):
+    config = OmegaConf.load(str(init_dir / "config.yaml"))
+    if "glp_kwargs" not in config:
+        raise ValueError(f"Checkpoint config at {init_dir / 'config.yaml'} does not contain glp_kwargs.")
+
+    normalizer_config = config.glp_kwargs.normalizer_config
+    rep_stats_path = init_dir / "rep_statistics.pt"
+    if rep_stats_path.exists():
+        normalizer_config.rep_statistic = str(rep_stats_path)
+    else:
+        normalizer_config.rep_statistic = ""
+    normalizer_config.d_input = hidden_size
+
+    tracedict_config = {
+        "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
+        "layers": [args.layer],
+        "retain": args.retain,
+    }
+    model = GLP(
+        normalizer_config=normalizer_config,
+        denoiser_config=config.glp_kwargs.denoiser_config,
+        sampling_method=getattr(config.glp_kwargs, "sampling_method", getattr(args, "sampling_method", "uniform")),
+        ot_chunk_size=getattr(config.glp_kwargs, "ot_chunk_size", getattr(args, "ot_chunk_size", 256)),
+        tracedict_config=tracedict_config,
+    )
+    model.load_pretrained(init_dir, name="final")
     return model
 
 def stream_train(args):
@@ -180,15 +240,24 @@ def stream_train(args):
         )
         phase_switch = False
 
-    normalization_method = canonicalize_normalization_method(
-        getattr(args, "normalization_method", "gaussian")
-    )
+    init_dir = resolve_init_checkpoint(getattr(args, "init_ckpt", None))
+    if init_dir is not None:
+        init_config = OmegaConf.load(str(init_dir / "config.yaml"))
+        init_normalizer_config = init_config.glp_kwargs.normalizer_config
+        normalization_method = canonicalize_normalization_method(
+            getattr(init_normalizer_config, "normalization_method", getattr(args, "normalization_method", "gaussian"))
+        )
+    else:
+        normalization_method = canonicalize_normalization_method(
+            getattr(args, "normalization_method", "gaussian")
+        )
     use_stats = normalization_requires_stats(normalization_method)
     use_gaussian_stats = normalization_method == "gaussian"
     use_rmsnorm_stats = normalization_method == "rmsnorm"
     use_iqr_stats = normalization_method == "iqr"
     quantile_percent = quantile_percent_from_method(normalization_method)
     use_quantile_stats = quantile_percent is not None
+    split_requested = bool(getattr(args, "split", False))
     
     # 1. Load Gemma Extractor
     LOGGER.info(f"Loading extractor model {args.model_name}")
@@ -201,43 +270,30 @@ def stream_train(args):
     hidden_size = int(hf_model.config.hidden_size)
     
     LOGGER.info("Setting up GLP denoiser")
-    glp_model = setup_glp_model(hidden_size, args).to(device)
+    if init_dir is not None:
+        LOGGER.info("Initializing GLP from %s.", init_dir)
+        glp_model = setup_init_glp_model(init_dir, hidden_size, args).to(device)
+    else:
+        glp_model = setup_glp_model(hidden_size, args).to(device)
     total_steps = args.total_steps
-    # Baseline optimizer: plain AdamW over all trainable GLP parameters.
-    opt_adamw = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
-
-    # Legacy Hybrid Muon-AdamW optimizer. Kept for future experiments.
-    # use_muon = getattr(args, "use_muon", False)
-    # if use_muon:
-    #     muon_params, adamw_params = [], []
-    #     for name, p in glp_model.named_parameters():
-    #         if not p.requires_grad or "normalizer" in name:
-    #             continue
-    #         if p.ndim == 2:
-    #             muon_params.append(p)
-    #         else:
-    #             adamw_params.append(p)
-    #
-    #     from torch.optim import Muon
-    #     opt_muon = Muon(muon_params, lr=0.03, momentum=0.95, ns_steps=6)
-    #     opt_adamw = torch.optim.AdamW(
-    #         adamw_params,
-    #         lr=args.learning_rate,
-    #         betas=(0.9, 0.95),
-    #         weight_decay=1e-4,
-    #     )
 
     from functools import partial
-    
-    lr_lambda = partial(
-        cosine_scheduler_with_warmup,
-        warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_steps),
-        max_steps=total_steps,
-        initial_factor=getattr(args, "initial_factor", 0.01),
-        final_factor=getattr(args, "final_factor", 0.01),
-    )
 
-    sched_adamw = torch.optim.lr_scheduler.LambdaLR(opt_adamw, lr_lambda=lr_lambda)
+    def create_optimizer_and_scheduler():
+        # Baseline optimizer: plain AdamW over all trainable GLP parameters.
+        optimizer = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
+        lr_lambda = partial(
+            cosine_scheduler_with_warmup,
+            warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_steps),
+            max_steps=total_steps,
+            initial_factor=getattr(args, "initial_factor", 0.01),
+            final_factor=getattr(args, "final_factor", 0.01),
+        )
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+        return optimizer, scheduler
+
+    opt_adamw = None
+    sched_adamw = None
 
     if args.wandb:
         import wandb
@@ -258,7 +314,7 @@ def stream_train(args):
     fineweb = FineWebSourceConfig(
         dataset_name=args.dataset_name,
         dataset_config=args.dataset_config,
-        split=args.split,
+        split=getattr(args, "dataset_split", "train"),
         text_field=args.text_field,
         max_documents=args.max_documents,
         streaming=True
@@ -290,8 +346,8 @@ def stream_train(args):
             )
         
         import yaml
-        d_model = args.d_model_mult * hidden_size
-        d_mlp = args.d_mlp_mult * hidden_size
+        denoiser_model = glp_model.denoiser.model
+        split_tail_indices = list(glp_model.denoiser.model.split_tail_indices)
         config_dict = {
             "model_name": args.model_name,
             "glp_kwargs": {
@@ -302,14 +358,15 @@ def stream_train(args):
                 },
                 "denoiser_config": {
                     "d_input": hidden_size,
-                    "d_model": d_model,
-                    "d_mlp": d_mlp,
-                    "n_layers": args.denoiser_layers,
-                    "multi_layer_n_layers": None,
-                    "use_spectral_norm": getattr(args, "use_spectral_norm", False),
+                    "d_model": denoiser_model.d_model,
+                    "d_mlp": denoiser_model.d_mlp,
+                    "n_layers": denoiser_model.n_layers,
+                    "multi_layer_n_layers": denoiser_model.multi_layer_n_layers,
+                    "split": bool(denoiser_model.split),
+                    "split_tail_indices": split_tail_indices,
                 },
-                "sampling_method": getattr(args, "sampling_method", "uniform"),
-                "ot_chunk_size": getattr(args, "ot_chunk_size", 256),
+                "sampling_method": glp_model.sampling_method,
+                "ot_chunk_size": glp_model.ot_chunk_size,
                 "tracedict_config": {
                     "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
                     "layers": [args.layer],
@@ -319,6 +376,17 @@ def stream_train(args):
         }
         with open(save_dir / "config.yaml", "w") as f:
             yaml.dump(config_dict, f)
+
+        if opt_adamw is not None and sched_adamw is not None:
+            torch.save(
+                {
+                    "optimizer": opt_adamw.state_dict(),
+                    "scheduler": sched_adamw.state_dict(),
+                    "global_step": global_step,
+                    "total_tokens_collected": total_tokens_collected,
+                },
+                save_dir / "opt.pt",
+            )
     
     tracedict_config = build_tracedict_config(layer=args.layer, retain=args.retain, layer_prefix=getattr(args, "layer_prefix", "model.layers"))
     use_autocast = bool(getattr(args, "use_bf16", True) and ("cuda" in str(device)))
@@ -454,6 +522,35 @@ def stream_train(args):
             _move_model_to_device(hf_model, offload_device, "Extractor LLM")
             _move_model_to_device(glp_model, device, "GLP model")
             _cleanup_cuda_cache()
+
+        if opt_adamw is None:
+            if split_requested and not glp_model.denoiser.model.split:
+                if use_stats:
+                    split_tail_indices = glp_model.configure_split_output_from_normalizer(
+                        proportion=getattr(args, "split_proportion", 0.1)
+                    )
+                    LOGGER.info(
+                        "Configured split output projection with %d/%d top-variance dimensions.",
+                        len(split_tail_indices),
+                        hidden_size,
+                    )
+                else:
+                    LOGGER.warning(
+                        "Requested split output projection with normalization_method=%s, "
+                        "but this mode has no variance stats; using the normal output projection.",
+                        normalization_method,
+                    )
+            opt_adamw, sched_adamw = create_optimizer_and_scheduler()
+            if init_dir is not None and getattr(args, "load_opt", False):
+                opt_path = init_dir / "opt.pt"
+                if opt_path.exists():
+                    opt_state = torch.load(opt_path, map_location=device)
+                    opt_adamw.load_state_dict(opt_state["optimizer"])
+                    if "scheduler" in opt_state:
+                        sched_adamw.load_state_dict(opt_state["scheduler"])
+                    LOGGER.info("Loaded optimizer state from %s.", opt_path)
+                else:
+                    LOGGER.warning("Requested --load-opt but no optimizer state found at %s.", opt_path)
         
         
         train_dataset = load_activation_dataset(str(tmp_dir))
@@ -469,38 +566,6 @@ def stream_train(args):
             if global_step >= total_steps: break
             
             batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
-            
-            # Legacy 5-step gradient coherence diagnostics. Disabled for the
-            # baseline run to keep training behavior and logging simple.
-            # calc_grad_coherence = False
-            # if (global_step + 1) % 5 == 0:
-            #     calc_grad_coherence = True
-            # diag_grad_cos_sim, diag_grad_norm, diag_grad_hoyer = 0.0, 0.0, 0.0
-            # if calc_grad_coherence:
-            #     opt_adamw.zero_grad()
-            #     half_size = batch['latents'].shape[0] // 2
-            #     batch_1 = {k: (v[:half_size] if v is not None else None) for k, v in batch.items()}
-            #     batch_2 = {k: (v[half_size:] if v is not None else None) for k, v in batch.items()}
-            #     target_layer = glp_model.denoiser.model.layers[0].up_proj.weight
-            #     D_grad = target_layer.numel()
-            #     with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-            #         out_1 = glp_model(**batch_1, global_step=global_step, total_steps=total_steps)
-            #     grad_1 = torch.autograd.grad(out_1.loss, target_layer)[0]
-            #     with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-            #         out_2 = glp_model(**batch_2, global_step=global_step, total_steps=total_steps)
-            #     grad_2 = torch.autograd.grad(out_2.loss, target_layer)[0]
-            #     with torch.no_grad():
-            #         g1_flat = grad_1.view(-1)
-            #         g2_flat = grad_2.view(-1)
-            #         diag_grad_cos_sim = torch.nn.functional.cosine_similarity(g1_flat, g2_flat, dim=0).item()
-            #         full_grad = (g1_flat + g2_flat) / 2.0
-            #         diag_grad_norm = full_grad.norm(p=2).item()
-            #         l1_norm = full_grad.abs().sum()
-            #         l2_norm = diag_grad_norm
-            #         sqrt_d = math.sqrt(D_grad)
-            #         hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
-            #         diag_grad_hoyer = hoyer.item()
-            #     opt_adamw.zero_grad()
 
             loss_kwargs = {
                 "tail_aware_weight": getattr(args, "tail_aware_weight", 0.0),
@@ -565,28 +630,6 @@ def stream_train(args):
                     "train/tail_region_mse": outputs.tail_region_mse.item(),
                     "train/non_tail_region_mse": outputs.non_tail_region_mse.item(),
                 }
-                
-                # Legacy tracking intentionally disabled for the baseline run:
-                # grad_norm, cosine similarity, pre/post L2 std, PR/H_SVD/kappa/k_99,
-                # dead_ratio, hoyer_sparsity, loss_early/loss_mid/loss_late, and gradient coherence.
-                # if outputs.PR != 0.0:
-                #     log_dict["train/PR"] = outputs.PR.item() if hasattr(outputs.PR, 'item') else outputs.PR
-                #     log_dict["train/H_SVD"] = outputs.H_SVD.item() if hasattr(outputs.H_SVD, 'item') else outputs.H_SVD
-                #     log_dict["train/kappa"] = outputs.kappa.item() if hasattr(outputs.kappa, 'item') else outputs.kappa
-                #     log_dict["train/k_99"] = outputs.k_99.item() if hasattr(outputs.k_99, 'item') else outputs.k_99
-                #     if hasattr(outputs, 'dead_ratio') and outputs.dead_ratio != 0.0:
-                #         log_dict["train/dead_ratio"] = outputs.dead_ratio.item() if hasattr(outputs.dead_ratio, 'item') else outputs.dead_ratio
-                #         log_dict["train/hoyer_sparsity"] = outputs.hoyer_sparsity.item() if hasattr(outputs.hoyer_sparsity, 'item') else outputs.hoyer_sparsity
-                #     if hasattr(outputs, 'loss_early'):
-                #         log_dict["train/loss_early"] = outputs.loss_early
-                #         log_dict["train/loss_mid"] = outputs.loss_mid
-                #         log_dict["train/loss_late"] = outputs.loss_late
-                # if diag_grad_cos_sim != 0.0:
-                #     log_dict["train/diag_grad_cos_sim"] = diag_grad_cos_sim
-                #     log_dict["train/diag_grad_norm"] = diag_grad_norm
-                #     log_dict["train/diag_grad_hoyer"] = diag_grad_hoyer
-                # if opt_muon:
-                #     log_dict["train/lr_muon"] = sched_muon.get_last_lr()[0]
                 log_dict["train/lr_adamw"] = sched_adamw.get_last_lr()[0]
                 wandb_run.log(log_dict, step=global_step)
 

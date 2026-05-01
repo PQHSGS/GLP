@@ -61,7 +61,6 @@ class ModelTrainConfig:
     d_model: int = 4096
     d_mlp: int = 8192
     denoiser_layers: int = 3
-    use_spectral_norm: bool = False
     multi_layer_n_layers: Optional[int] = None
     layer: int = 7
     layer_prefix: str = "model.layers"
@@ -73,10 +72,13 @@ class ModelTrainConfig:
     gradient_accumulation_steps: int = 1
     gradient_clipping_threshold: float = 1.0
     log_every_n_steps: int = 10
-    save_opt_state: bool = True
     normalization_method: str = "gaussian"
     sampling_method: str = "uniform"
     ot_chunk_size: int = 256
+    split: bool = False
+    split_proportion: float = 0.1
+    init_ckpt: Optional[str] = None
+    load_opt: bool = False
     tail_aware_weight: float = 0.0
     tail_aware_start: int = 1000
     tail_aware_min_weight: float = 0.1
