@@ -88,7 +88,7 @@ def _normalization_requires_stats(method):
     return _canonicalize_normalization_method(method) != "log_norm"
 
 
-def _canonicalize_sampling_method(method):
+def _canonicalize_noise_sampling_method(method):
     if method is None:
         return "uniform"
 
@@ -106,8 +106,30 @@ def _canonicalize_sampling_method(method):
         return method
 
     raise ValueError(
-        f"Unsupported sampling_method '{method}'. "
+        f"Unsupported noise_sampling_method '{method}'. "
         "Expected one of ['uniform', 'ot']."
+    )
+
+
+
+def _canonicalize_u_sampling_method(method):
+    if method is None:
+        return "uniform"
+
+    method = str(method).strip().lower().replace("-", "_")
+    aliases = {
+        "default": "uniform",
+        "rand": "uniform",
+        "random": "uniform",
+    }
+    method = aliases.get(method, method)
+
+    if method in {"uniform", "beta"}:
+        return method
+
+    raise ValueError(
+        f"Unsupported u_sampling_method '{method}'. "
+        "Expected one of ['uniform', 'beta']."
     )
 
 
@@ -158,19 +180,36 @@ def _match_noise_to_latents_ot(latents, noise, *, chunk_size=256):
     return optimized_flat_noise.reshape_as(noise)
 
 
-def _sample_training_noise(latents, *, generator=None, sampling_method="uniform", ot_chunk_size=256):
-    sampling_method = _canonicalize_sampling_method(sampling_method)
+def _sample_training_noise(
+    latents,
+    *,
+    generator=None,
+    noise_sampling_method="uniform",
+    ot_chunk_size=256,
+):
+    noise_sampling_method = _canonicalize_noise_sampling_method(noise_sampling_method)
+    
     noise = torch.randn(
         latents.shape,
         device=latents.device,
         dtype=latents.dtype,
         generator=generator,
     )
-
-    if sampling_method == "ot":
+    
+    if noise_sampling_method == "ot":
         return _match_noise_to_latents_ot(latents, noise, chunk_size=ot_chunk_size)
 
     return noise
+
+
+def _sample_training_u(latents, *, generator=None, u_sampling_method="uniform"):
+    u_sampling_method = _canonicalize_u_sampling_method(u_sampling_method)
+
+    if u_sampling_method == "beta":
+        beta_dist = torch.distributions.Beta(5.0, 1.0)
+        return beta_dist.sample((latents.shape[0],)).to(device=latents.device)
+
+    return torch.rand(latents.shape[0], device=latents.device, generator=generator)
 
 
 # ==========================
@@ -543,7 +582,8 @@ class GLP(nn.Module):
         normalizer_config,
         denoiser_config,
         tracedict_config=None,
-        sampling_method="uniform",
+        noise_sampling_method="uniform",
+        u_sampling_method="uniform",
         ot_chunk_size=256,
     ):
         super().__init__()
@@ -551,7 +591,8 @@ class GLP(nn.Module):
         self.denoiser = Denoiser(**denoiser_config)
         self.scheduler = flow_matching.fm_scheduler()
         self.tracedict_config = tracedict_config
-        self.sampling_method = _canonicalize_sampling_method(sampling_method)
+        self.noise_sampling_method = _canonicalize_noise_sampling_method(noise_sampling_method)
+        self.u_sampling_method = _canonicalize_u_sampling_method(u_sampling_method)
         self.ot_chunk_size = _canonicalize_ot_chunk_size(ot_chunk_size)
 
     def configure_split_output_from_normalizer(self, proportion=0.1):
@@ -631,13 +672,17 @@ class GLP(nn.Module):
         #     if u is None:
         #         u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
         if u is None:
-            u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
+            u = _sample_training_u(
+                latents,
+                generator=generator,
+                u_sampling_method=self.u_sampling_method,
+            )
 
         # prepare flow matching inputs and target
         noise = _sample_training_noise(
             latents,
             generator=generator,
-            sampling_method=self.sampling_method,
+            noise_sampling_method=self.noise_sampling_method,
             ot_chunk_size=self.ot_chunk_size,
         )
         noisy_latents, target, timesteps, meta = flow_matching.fm_prepare(
@@ -963,6 +1008,11 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_on
     elif "rep_statistic" in config:
         if rep_stats_file.exists():
             config.rep_statistic = rep_stats_path
+
+    if "glp_kwargs" in config and "sampling_method" in config.glp_kwargs:
+        config.glp_kwargs.noise_sampling_method = config.glp_kwargs.sampling_method
+        del config.glp_kwargs["sampling_method"]
+
     OmegaConf.resolve(config)
     model = GLP(**config.glp_kwargs)
     model.load_pretrained(resolved_folder, name=checkpoint)

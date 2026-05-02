@@ -73,7 +73,8 @@ class ModelTrainConfig:
     gradient_clipping_threshold: float = 1.0
     log_every_n_steps: int = 10
     normalization_method: str = "gaussian"
-    sampling_method: str = "uniform"
+    noise_sampling_method: str = "uniform"
+    u_sampling_method: str = "uniform"
     ot_chunk_size: int = 256
     split: bool = False
     split_proportion: float = 0.1

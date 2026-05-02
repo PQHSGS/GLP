@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import torch
 
@@ -8,9 +9,26 @@ from gemma2_pipeline.streaming import split_hf_checkpoint_ref
 
 
 class SamplingMethodTests(unittest.TestCase):
-    def test_canonicalize_sampling_method_defaults_to_uniform(self):
-        self.assertEqual(denoiser._canonicalize_sampling_method(None), "uniform")
-        self.assertEqual(denoiser._canonicalize_sampling_method("OT"), "ot")
+    def test_canonicalize_noise_sampling_method_defaults_to_uniform(self):
+        self.assertEqual(denoiser._canonicalize_noise_sampling_method(None), "uniform")
+        self.assertEqual(denoiser._canonicalize_noise_sampling_method("OT"), "ot")
+
+    def test_canonicalize_u_sampling_method_defaults_to_uniform(self):
+        self.assertEqual(denoiser._canonicalize_u_sampling_method(None), "uniform")
+        self.assertEqual(denoiser._canonicalize_u_sampling_method("beta"), "beta")
+
+    def test_beta_u_sampling_uses_fixed_parameters(self):
+        latents = torch.zeros(4, 2, 3)
+
+        with mock.patch("glp.denoiser.torch.distributions.Beta") as beta_cls:
+            beta_instance = beta_cls.return_value
+            beta_instance.sample.return_value = torch.tensor([0.81, 0.92, 0.97, 0.88])
+
+            sampled_u = denoiser._sample_training_u(latents, u_sampling_method="beta")
+
+        beta_cls.assert_called_once_with(5.0, 1.0)
+        beta_instance.sample.assert_called_once_with((4,))
+        self.assertTrue(torch.equal(sampled_u, torch.tensor([0.81, 0.92, 0.97, 0.88])))
 
     def test_ot_sampling_requires_sequence_shaped_latents(self):
         latents = torch.tensor([[0.0], [10.0]], dtype=torch.float32)
@@ -109,8 +127,10 @@ class StreamGlpParserTests(unittest.TestCase):
 
         defaults = parser.parse_args([])
         enabled = parser.parse_args([
-            "--sampling-method",
+            "--noise-sampling-method",
             "ot",
+            "--u-sampling-method",
+            "beta",
             "--ot-chunk-size",
             "128",
             "--split",
@@ -121,13 +141,15 @@ class StreamGlpParserTests(unittest.TestCase):
             "--load-opt",
         ])
 
-        self.assertEqual(defaults.sampling_method, "uniform")
+        self.assertEqual(defaults.noise_sampling_method, "uniform")
+        self.assertEqual(defaults.u_sampling_method, "uniform")
         self.assertEqual(defaults.ot_chunk_size, 256)
         self.assertFalse(defaults.split)
         self.assertEqual(defaults.split_proportion, 0.1)
         self.assertIsNone(defaults.init_ckpt)
         self.assertFalse(defaults.load_opt)
-        self.assertEqual(enabled.sampling_method, "ot")
+        self.assertEqual(enabled.noise_sampling_method, "ot")
+        self.assertEqual(enabled.u_sampling_method, "beta")
         self.assertEqual(enabled.ot_chunk_size, 128)
         self.assertTrue(enabled.split)
         self.assertEqual(enabled.split_proportion, 0.2)

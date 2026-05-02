@@ -81,16 +81,23 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--sampling-method",
+        "--noise-sampling-method",
+        dest="noise_sampling_method",
         choices=["uniform", "ot"],
-        default=train_defaults.sampling_method,
+        default=train_defaults.noise_sampling_method,
         help="Training noise pairing method. 'uniform' keeps random batch pairing; 'ot' uses minibatch optimal transport.",
+    )
+    parser.add_argument(
+        "--u-sampling-method",
+        choices=["uniform", "beta"],
+        default=train_defaults.u_sampling_method,
+        help="Curriculum for sampling flow-matching u values. 'beta' uses Beta(5, 1) to bias samples toward the end of the schedule.",
     )
     parser.add_argument(
         "--ot-chunk-size",
         type=int,
         default=train_defaults.ot_chunk_size,
-        help="Chunk size for minibatch OT matching. Smaller chunks reduce Hungarian cost; ignored unless --sampling-method=ot.",
+        help="Chunk size for minibatch OT matching. Smaller chunks reduce Hungarian cost; ignored unless --noise-sampling-method=ot.",
     )
     parser.add_argument(
         "--split",

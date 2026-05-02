@@ -159,7 +159,8 @@ def setup_glp_model(hidden_size, args):
             "n_layers": args.denoiser_layers,
             "multi_layer_n_layers": None,
         },
-        sampling_method=getattr(args, "sampling_method", "uniform"),
+        noise_sampling_method=getattr(args, "noise_sampling_method", "uniform"),
+        u_sampling_method=getattr(args, "u_sampling_method", "uniform"),
         ot_chunk_size=getattr(args, "ot_chunk_size", 256),
         tracedict_config={
             "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
@@ -219,7 +220,12 @@ def setup_init_glp_model(init_dir, hidden_size, args):
     model = GLP(
         normalizer_config=normalizer_config,
         denoiser_config=config.glp_kwargs.denoiser_config,
-        sampling_method=getattr(config.glp_kwargs, "sampling_method", getattr(args, "sampling_method", "uniform")),
+        noise_sampling_method=getattr(
+            config.glp_kwargs,
+            "noise_sampling_method",
+            getattr(args, "noise_sampling_method", "uniform"),
+        ),
+        u_sampling_method=getattr(config.glp_kwargs, "u_sampling_method", getattr(args, "u_sampling_method", "uniform")),
         ot_chunk_size=getattr(config.glp_kwargs, "ot_chunk_size", getattr(args, "ot_chunk_size", 256)),
         tracedict_config=tracedict_config,
     )
@@ -365,7 +371,7 @@ def stream_train(args):
                     "split": bool(denoiser_model.split),
                     "split_tail_indices": split_tail_indices,
                 },
-                "sampling_method": glp_model.sampling_method,
+                "noise_sampling_method": glp_model.noise_sampling_method,
                 "ot_chunk_size": glp_model.ot_chunk_size,
                 "tracedict_config": {
                     "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
