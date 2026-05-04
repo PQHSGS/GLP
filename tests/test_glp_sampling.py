@@ -16,6 +16,7 @@ class SamplingMethodTests(unittest.TestCase):
     def test_canonicalize_u_sampling_method_defaults_to_uniform(self):
         self.assertEqual(denoiser._canonicalize_u_sampling_method(None), "uniform")
         self.assertEqual(denoiser._canonicalize_u_sampling_method("beta"), "beta")
+        self.assertEqual(denoiser._canonicalize_u_sampling_method("logit-normal"), "logit_normal")
 
     def test_beta_u_sampling_uses_fixed_parameters(self):
         latents = torch.zeros(4, 2, 3)
@@ -130,7 +131,7 @@ class StreamGlpParserTests(unittest.TestCase):
             "--noise-sampling-method",
             "ot",
             "--u-sampling-method",
-            "beta",
+            "logit_normal",
             "--ot-chunk-size",
             "128",
             "--split",
@@ -143,13 +144,13 @@ class StreamGlpParserTests(unittest.TestCase):
 
         self.assertEqual(defaults.noise_sampling_method, "uniform")
         self.assertEqual(defaults.u_sampling_method, "uniform")
-        self.assertEqual(defaults.ot_chunk_size, 256)
+        self.assertEqual(defaults.ot_chunk_size, 4096)
         self.assertFalse(defaults.split)
         self.assertEqual(defaults.split_proportion, 0.1)
         self.assertIsNone(defaults.init_ckpt)
         self.assertFalse(defaults.load_opt)
         self.assertEqual(enabled.noise_sampling_method, "ot")
-        self.assertEqual(enabled.u_sampling_method, "beta")
+        self.assertEqual(enabled.u_sampling_method, "logit_normal")
         self.assertEqual(enabled.ot_chunk_size, 128)
         self.assertTrue(enabled.split)
         self.assertEqual(enabled.split_proportion, 0.2)

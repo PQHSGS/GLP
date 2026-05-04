@@ -8,7 +8,6 @@ from omegaconf import OmegaConf
 import os
 from pathlib import Path
 from safetensors.torch import load_file, save_file
-from scipy.optimize import linear_sum_assignment
 import torch
 import torch.nn as nn
 from types import SimpleNamespace
@@ -124,18 +123,18 @@ def _canonicalize_u_sampling_method(method):
     }
     method = aliases.get(method, method)
 
-    if method in {"uniform", "beta"}:
+    if method in {"uniform", "beta", "logit_normal"}:
         return method
 
     raise ValueError(
         f"Unsupported u_sampling_method '{method}'. "
-        "Expected one of ['uniform', 'beta']."
+        "Expected one of ['uniform', 'beta', 'logit_normal']."
     )
 
 
 def _canonicalize_ot_chunk_size(chunk_size):
     if chunk_size is None:
-        return 256
+        return 4096
 
     chunk_size = int(chunk_size)
     if chunk_size <= 0:
@@ -143,7 +142,92 @@ def _canonicalize_ot_chunk_size(chunk_size):
     return chunk_size
 
 
-def _match_noise_to_latents_ot(latents, noise, *, chunk_size=256):
+def greedy_assignment_gpu(cost_matrix):
+    """Fallback O(N^2) greedy assignment if Sinkhorn collisions occur."""
+    n_items = cost_matrix.shape[0]
+    matched_j = torch.zeros(n_items, dtype=torch.long, device=cost_matrix.device)
+    available_j = torch.ones(n_items, dtype=torch.bool, device=cost_matrix.device)
+
+    for row_idx in range(n_items):
+        valid_costs = cost_matrix[row_idx].clone()
+        valid_costs[~available_j] = float("inf")
+        best_j = torch.argmin(valid_costs)
+        matched_j[row_idx] = best_j
+        available_j[best_j] = False
+
+    return matched_j
+
+
+def sliced_optimal_transport(x0, x1):
+    """
+    Sliced Optimal Transport pairing.
+    O(N log N) time, O(N) memory.
+
+    Args:
+        x0: Gaussian noise batch [N, D]
+        x1: Target latent batch [N, D]
+    Returns:
+        x1_paired: The latent batch reordered to match x0
+    """
+    if x0.shape != x1.shape:
+        raise ValueError(f"OT pairing requires equal shapes, got {x0.shape} vs {x1.shape}.")
+
+    n_items, d_model = x0.shape
+    if n_items < 2:
+        return x1
+
+    direction = torch.randn(d_model, device=x0.device, dtype=x0.dtype)
+    direction = direction / torch.clamp(direction.norm(), min=torch.finfo(direction.dtype).eps)
+
+    proj_x0 = torch.matmul(x0, direction)
+    proj_x1 = torch.matmul(x1, direction)
+
+    _, indices_x0 = torch.sort(proj_x0)
+    _, indices_x1 = torch.sort(proj_x1)
+
+    inverse_indices_x0 = torch.empty_like(indices_x0)
+    inverse_indices_x0[indices_x0] = torch.arange(n_items, device=x0.device)
+
+    matched_indices_x1 = indices_x1[inverse_indices_x0]
+    return x1[matched_indices_x1]
+
+
+'''
+def minibatch_sinkhorn_ot(x0, x1, epsilon=0.01, iterations=100):
+    """Entropic OT pairing between noise x0 and data x1 on GPU."""
+    if x0.shape != x1.shape:
+        raise ValueError(f"OT pairing requires equal shapes, got {x0.shape} vs {x1.shape}.")
+
+    n_items, _ = x0.shape
+    if n_items < 2:
+        return x1
+
+    cost_matrix = torch.cdist(x0.float(), x1.float(), p=2).pow(2)
+    epsilon = float(epsilon)
+    iterations = int(iterations)
+    log_mass = torch.log(torch.tensor(1.0 / n_items, device=cost_matrix.device, dtype=cost_matrix.dtype))
+    u = torch.zeros(n_items, device=cost_matrix.device, dtype=cost_matrix.dtype)
+    v = torch.zeros(n_items, device=cost_matrix.device, dtype=cost_matrix.dtype)
+
+    for _ in range(iterations):
+        u = epsilon * (
+            log_mass - torch.logsumexp((v.unsqueeze(0) - cost_matrix) / epsilon, dim=1)
+        )
+        v = epsilon * (
+            log_mass - torch.logsumexp((u.unsqueeze(1) - cost_matrix) / epsilon, dim=0)
+        )
+
+    coupling = torch.exp((u.unsqueeze(1) + v.unsqueeze(0) - cost_matrix) / epsilon)
+    best_matches_idx = torch.argmax(coupling, dim=1)
+    if torch.unique(best_matches_idx).numel() < n_items:
+        print("WARNING: Sinkhorn algorithm produced non-unique matches, falling back to greedy assignment.")
+        best_matches_idx = greedy_assignment_gpu(cost_matrix)
+
+    return x1[best_matches_idx]
+'''
+
+
+def _match_noise_to_latents_ot(latents, noise, *, chunk_size=4096, epsilon=0.01, iterations=100):
     if latents.shape != noise.shape:
         raise ValueError(
             f"Latents/noise shape mismatch for OT sampling: {latents.shape} vs {noise.shape}."
@@ -160,21 +244,19 @@ def _match_noise_to_latents_ot(latents, noise, *, chunk_size=256):
     chunk_size = _canonicalize_ot_chunk_size(chunk_size)
 
     # Match whole sequences per batch item, not individual tokens. This keeps
-    # Hungarian complexity at O(batch^3) instead of O((batch * seq)^3).
-    flat_latents = latents.detach().reshape(batch_size, -1).float()
-    flat_noise_for_cost = noise.detach().reshape(batch_size, -1).float()
+    # the sliced OT cost linearithmic while letting us process large batches in
+    # manageable chunks.
+    flat_latents = latents.detach().reshape(batch_size, -1)
     flat_noise = noise.reshape(batch_size, -1)
     reordered_noise_chunks = []
 
     for start_idx in range(0, batch_size, chunk_size):
         end_idx = min(start_idx + chunk_size, batch_size)
         chunk_latents = flat_latents[start_idx:end_idx]
-        chunk_noise_for_cost = flat_noise_for_cost[start_idx:end_idx]
         chunk_noise = flat_noise[start_idx:end_idx]
-        cost_matrix = torch.cdist(chunk_latents, chunk_noise_for_cost)
-        _, col_ind = linear_sum_assignment(cost_matrix.cpu().numpy())
-        matched_index = torch.as_tensor(col_ind, device=noise.device, dtype=torch.long)
-        reordered_noise_chunks.append(chunk_noise.index_select(0, matched_index))
+        reordered_noise_chunks.append(
+            sliced_optimal_transport(chunk_latents, chunk_noise)
+        )
 
     optimized_flat_noise = torch.cat(reordered_noise_chunks, dim=0)
     return optimized_flat_noise.reshape_as(noise)
@@ -185,7 +267,7 @@ def _sample_training_noise(
     *,
     generator=None,
     noise_sampling_method="uniform",
-    ot_chunk_size=256,
+    ot_chunk_size=4096,
 ):
     noise_sampling_method = _canonicalize_noise_sampling_method(noise_sampling_method)
     
@@ -208,6 +290,14 @@ def _sample_training_u(latents, *, generator=None, u_sampling_method="uniform"):
     if u_sampling_method == "beta":
         beta_dist = torch.distributions.Beta(5.0, 1.0)
         return beta_dist.sample((latents.shape[0],)).to(device=latents.device)
+
+    if u_sampling_method == "logit_normal":
+        normal_samples = torch.randn(
+            latents.shape[0],
+            device=latents.device,
+            generator=generator,
+        )
+        return torch.sigmoid(normal_samples)
 
     return torch.rand(latents.shape[0], device=latents.device, generator=generator)
 
@@ -584,16 +674,28 @@ class GLP(nn.Module):
         tracedict_config=None,
         noise_sampling_method="uniform",
         u_sampling_method="uniform",
-        ot_chunk_size=256,
+        ot_chunk_size=4096,
+        solver=None,
     ):
         super().__init__()
         self.normalizer = Normalizer.from_config(**normalizer_config)
         self.denoiser = Denoiser(**denoiser_config)
         self.scheduler = flow_matching.fm_scheduler()
+        self.solver = flow_matching.canonicalize_solver(solver) if solver is not None else None
+        self.inference_scheduler = None
         self.tracedict_config = tracedict_config
         self.noise_sampling_method = _canonicalize_noise_sampling_method(noise_sampling_method)
         self.u_sampling_method = _canonicalize_u_sampling_method(u_sampling_method)
         self.ot_chunk_size = _canonicalize_ot_chunk_size(ot_chunk_size)
+
+    def set_inference_solver(self, solver):
+        self.solver = flow_matching.canonicalize_solver(solver)
+        num_train_timesteps = getattr(self.scheduler.config, "num_train_timesteps", 1000)
+        self.inference_scheduler = flow_matching.build_inference_scheduler(
+            self.solver,
+            num_train_timesteps=num_train_timesteps,
+        )
+        return self
 
     def configure_split_output_from_normalizer(self, proportion=0.1):
         proportion = float(proportion)
@@ -1016,5 +1118,7 @@ def load_glp(weights_folder, device="cuda:0", checkpoint="final", local_files_on
     OmegaConf.resolve(config)
     model = GLP(**config.glp_kwargs)
     model.load_pretrained(resolved_folder, name=checkpoint)
+    if "glp_kwargs" in config and "solver" in config.glp_kwargs:
+        model.set_inference_solver(config.glp_kwargs.solver)
     model.to(device)
     return model, model.normalizer.mean, model.normalizer.var

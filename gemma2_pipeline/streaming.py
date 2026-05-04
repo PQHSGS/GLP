@@ -161,7 +161,7 @@ def setup_glp_model(hidden_size, args):
         },
         noise_sampling_method=getattr(args, "noise_sampling_method", "uniform"),
         u_sampling_method=getattr(args, "u_sampling_method", "uniform"),
-        ot_chunk_size=getattr(args, "ot_chunk_size", 256),
+        ot_chunk_size=getattr(args, "ot_chunk_size", 4096),
         tracedict_config={
             "layer_prefix": getattr(args, "layer_prefix", "model.layers"),
             "layers": [args.layer],
@@ -226,10 +226,12 @@ def setup_init_glp_model(init_dir, hidden_size, args):
             getattr(args, "noise_sampling_method", "uniform"),
         ),
         u_sampling_method=getattr(config.glp_kwargs, "u_sampling_method", getattr(args, "u_sampling_method", "uniform")),
-        ot_chunk_size=getattr(config.glp_kwargs, "ot_chunk_size", getattr(args, "ot_chunk_size", 256)),
+        ot_chunk_size=getattr(config.glp_kwargs, "ot_chunk_size", getattr(args, "ot_chunk_size", 4096)),
         tracedict_config=tracedict_config,
     )
     model.load_pretrained(init_dir, name="final")
+    if "solver" in config.glp_kwargs:
+        model.set_inference_solver(config.glp_kwargs.solver)
     return model
 
 def stream_train(args):
@@ -372,6 +374,8 @@ def stream_train(args):
                     "split_tail_indices": split_tail_indices,
                 },
                 "noise_sampling_method": glp_model.noise_sampling_method,
+                "u_sampling_method": glp_model.u_sampling_method,
+                "solver": glp_model.solver,
                 "ot_chunk_size": glp_model.ot_chunk_size,
                 "tracedict_config": {
                     "layer_prefix": getattr(args, "layer_prefix", "model.layers"),

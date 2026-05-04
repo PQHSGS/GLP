@@ -11,7 +11,7 @@ except ImportError:
 # =========================
 #   Diffusion Functions
 # =========================
-def postprocess_on_manifold_wrapper(model, u=0.5, num_timesteps=20, layer_idx=None):
+def postprocess_on_manifold_wrapper(model, u=0.5, num_timesteps=20, layer_idx=None, solver=None):
     scheduler = model.scheduler
     num_train_timesteps = scheduler.config.num_train_timesteps
     scheduler.set_timesteps(num_timesteps)
@@ -37,7 +37,8 @@ def postprocess_on_manifold_wrapper(model, u=0.5, num_timesteps=20, layer_idx=No
             start_timestep=timesteps[0].item(),
             num_timesteps=num_timesteps,
             show_progress=False,
-            layer_idx=layer_idx
+            layer_idx=layer_idx,
+            solver=solver,
         )
         latents = model.normalizer.denormalize(latents, layer_idx=layer_idx)
         if has_seq_dim:
