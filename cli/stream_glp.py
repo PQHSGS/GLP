@@ -30,7 +30,12 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument("--retain", choices=["input", "output"], default=train_defaults.retain)
     parser.add_argument("--max-length", type=int, default=collect_defaults.max_length)
     parser.add_argument("--token-idx", choices=["last", "all", "random_doc"], default=collect_defaults.token_idx)
-    parser.add_argument("--sample-seed", type=int, default=collect_defaults.sample_seed)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=train_defaults.seed,
+        help="Deterministic seed for activation streaming, timestep sampling, and noise sampling. Use -1 to leave randomness free.",
+    )
     parser.add_argument("--drop-bos", action=argparse.BooleanOptionalAction, default=collect_defaults.drop_bos)
     parser.add_argument("--padding-side", choices=["left", "right"], default=collect_defaults.padding_side)
     parser.add_argument("--document-batch-size", type=int, default=collect_defaults.document_batch_size)
@@ -69,7 +74,8 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     
     # Stream/Train args
     parser.add_argument("--stream-chunk-size", type=int, default=1000000, help="Number of activations per chunk")
-    parser.add_argument("--total-steps", type=int, default=244, help="Total number of optimizer steps")
+    parser.add_argument("--total-steps", type=int, default=244, help="Optimizer steps per epoch.")
+    parser.add_argument("--num-epochs", type=int, default=train_defaults.num_epochs, help="Number of full streaming epochs to run over the dataset.")
     parser.add_argument("--batch-size", type=int, default=train_defaults.batch_size)
     parser.add_argument("--learning-rate", type=float, default=train_defaults.learning_rate)
     parser.add_argument(
@@ -83,9 +89,9 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     parser.add_argument(
         "--noise-sampling-method",
         dest="noise_sampling_method",
-        choices=["uniform", "ot"],
+        choices=["uniform", "sot", "sinkhorn"],
         default=train_defaults.noise_sampling_method,
-        help="Training noise pairing method. 'uniform' keeps random batch pairing; 'ot' uses minibatch optimal transport.",
+        help="Training noise pairing method. 'uniform' keeps random pairing; 'sot' uses sliced OT; 'sinkhorn' uses entropic Sinkhorn OT.",
     )
     parser.add_argument(
         "--u-sampling-method",
@@ -97,7 +103,7 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         "--ot-chunk-size",
         type=int,
         default=train_defaults.ot_chunk_size,
-        help="Chunk size for sliced OT matching. Larger chunks increase global pairing quality; ignored unless --noise-sampling-method=ot.",
+        help="Chunk size for OT matching. Larger chunks increase global pairing quality for sot and sinkhorn.",
     )
     parser.add_argument(
         "--split",
@@ -113,10 +119,10 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     )
     parser.add_argument("--gradient-clipping-threshold", type=float, default=train_defaults.gradient_clipping_threshold)
     parser.add_argument("--log-every-n-steps", type=int, default=train_defaults.log_every_n_steps)
-    parser.add_argument("--tail-aware-weight", type=float, default=train_defaults.tail_aware_weight, help="Tail aggression alpha. 0 disables tail-aware weighting.")
-    parser.add_argument("--tail-aware-start", type=int, default=train_defaults.tail_aware_start, help="Enable tail-aware loss weighting at this optimizer step (before that: plain MSE).")
-    parser.add_argument("--tail-aware-min-weight", type=float, default=train_defaults.tail_aware_min_weight, help="Minimum raw-magnitude loss multiplier.")
-    parser.add_argument("--tail-aware-max-weight", type=float, default=train_defaults.tail_aware_max_weight, help="Maximum raw-magnitude loss multiplier. <=0 disables max clamping.")
+    # parser.add_argument("--tail-aware-weight", type=float, default=train_defaults.tail_aware_weight, help="Tail aggression alpha. 0 disables tail-aware weighting.")
+    # parser.add_argument("--tail-aware-start", type=int, default=train_defaults.tail_aware_start, help="Enable tail-aware loss weighting at this optimizer step (before that: plain MSE).")
+    # parser.add_argument("--tail-aware-min-weight", type=float, default=train_defaults.tail_aware_min_weight, help="Minimum raw-magnitude loss multiplier.")
+    # parser.add_argument("--tail-aware-max-weight", type=float, default=train_defaults.tail_aware_max_weight, help="Maximum raw-magnitude loss multiplier. <=0 disables max clamping.")
     parser.add_argument("--warmup-ratio", type=float, default=train_defaults.warmup_ratio)
     parser.add_argument("--initial-factor", type=float, default=train_defaults.initial_factor)
     parser.add_argument("--final-factor", type=float, default=train_defaults.final_factor)

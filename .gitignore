@@ -19,5 +19,5 @@ scripts/
 # OS/editor
 .DS_Store
 Thumbs.db
-gemma_ot/
+gemma_dynamic/
 glp_train.ipynb

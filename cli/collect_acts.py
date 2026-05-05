@@ -43,7 +43,12 @@ def build_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
 
     parser.add_argument("--max-length", type=int, default=defaults.max_length)
     parser.add_argument("--token-idx", choices=["last", "all", "random_doc"], default=defaults.token_idx)
-    parser.add_argument("--sample-seed", type=int, default=defaults.sample_seed)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=defaults.seed,
+        help="Deterministic seed for activation sampling and token selection. Use -1 to leave randomness free.",
+    )
     parser.add_argument("--drop-bos", action=argparse.BooleanOptionalAction, default=defaults.drop_bos)
     parser.add_argument("--padding-side", choices=["left", "right"], default=defaults.padding_side)
     parser.add_argument("--document-batch-size", type=int, default=defaults.document_batch_size)
@@ -71,7 +76,7 @@ def run(args: argparse.Namespace) -> None:
         layer=args.layer,
         max_length=args.max_length,
         token_idx=args.token_idx,
-        sample_seed=args.sample_seed,
+        seed=args.seed,
         drop_bos=args.drop_bos,
         padding_side=args.padding_side,
         document_batch_size=args.document_batch_size,

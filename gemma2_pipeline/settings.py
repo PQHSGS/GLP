@@ -27,7 +27,7 @@ class ActivationCollectionConfig:
     layer_prefix: str = "model.layers"
     max_length: int = 2048
     token_idx: Literal["last", "all", "random_doc"] = "all"
-    sample_seed: int = 0
+    seed: int = -1
     drop_bos: bool = True
     padding_side: Literal["left", "right"] = "right"
     document_batch_size: int = 16
@@ -67,6 +67,7 @@ class ModelTrainConfig:
     retain: str = "output"
     device: str = "auto"
     use_bf16: bool = True
+    seed: int = -1
     learning_rate: float = 5e-5
     batch_size: int = 4096
     gradient_accumulation_steps: int = 1
@@ -80,10 +81,10 @@ class ModelTrainConfig:
     split_proportion: float = 0.1
     init_ckpt: Optional[str] = None
     load_opt: bool = False
-    tail_aware_weight: float = 0.0
-    tail_aware_start: int = 1000
-    tail_aware_min_weight: float = 0.1
-    tail_aware_max_weight: float = 10.0
+    # tail_aware_weight: float = 0.0
+    # tail_aware_start: int = 1000
+    # tail_aware_min_weight: float = 0.1
+    # tail_aware_max_weight: float = 10.0
     warmup_ratio: float = 0.01
     initial_factor: float = 0.01
     final_factor: float = 0.1

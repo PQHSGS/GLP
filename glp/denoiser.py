@@ -96,17 +96,20 @@ def _canonicalize_noise_sampling_method(method):
         "default": "uniform",
         "rand": "uniform",
         "random": "uniform",
-        "optimal_transport": "ot",
-        "hungarian": "ot",
+        "optimal_transport": "sot",
+        "ot": "sot",
+        "hungarian": "sot",
+        "sinkhorn": "sinkhorn",
+        "sinkhorn_ot": "sinkhorn",
     }
     method = aliases.get(method, method)
 
-    if method in {"uniform", "ot"}:
+    if method in {"uniform", "sot", "sinkhorn"}:
         return method
 
     raise ValueError(
         f"Unsupported noise_sampling_method '{method}'. "
-        "Expected one of ['uniform', 'ot']."
+        "Expected one of ['uniform', 'sot', 'sinkhorn']."
     )
 
 
@@ -142,6 +145,9 @@ def _canonicalize_ot_chunk_size(chunk_size):
     return chunk_size
 
 
+_SINKHORN_COLLISION_WARNING_EMITTED = False
+
+
 def greedy_assignment_gpu(cost_matrix):
     """Fallback O(N^2) greedy assignment if Sinkhorn collisions occur."""
     n_items = cost_matrix.shape[0]
@@ -156,6 +162,107 @@ def greedy_assignment_gpu(cost_matrix):
         available_j[best_j] = False
 
     return matched_j
+
+
+def _repair_duplicate_sinkhorn_matches(log_coupling, cost_matrix, best_matches_idx):
+    n_items = best_matches_idx.shape[0]
+    counts = torch.bincount(best_matches_idx, minlength=n_items)
+    if torch.all(counts <= 1):
+        return best_matches_idx
+
+    global _SINKHORN_COLLISION_WARNING_EMITTED
+    unresolved_count = int((counts[best_matches_idx] > 1).sum().item() - (counts > 1).sum().item())
+    if not _SINKHORN_COLLISION_WARNING_EMITTED:
+        print(
+            "WARNING: Sinkhorn algorithm produced non-unique matches; "
+            f"repairing {unresolved_count} collided rows with greedy assignment."
+        )
+        _SINKHORN_COLLISION_WARNING_EMITTED = True
+
+    repaired_idx = torch.full_like(best_matches_idx, -1)
+    used_cols = torch.zeros(n_items, dtype=torch.bool, device=best_matches_idx.device)
+
+    for col_idx in torch.nonzero(counts > 0, as_tuple=False).flatten():
+        rows = torch.nonzero(best_matches_idx == col_idx, as_tuple=False).flatten()
+        if rows.numel() == 1:
+            winner_row = rows[0]
+        else:
+            winner_row = rows[torch.argmax(log_coupling[rows, col_idx])]
+        repaired_idx[winner_row] = col_idx
+        used_cols[col_idx] = True
+
+    remaining_rows = torch.nonzero(repaired_idx < 0, as_tuple=False).flatten()
+    if remaining_rows.numel() > 0:
+        remaining_cols = torch.nonzero(~used_cols, as_tuple=False).flatten()
+        local_costs = cost_matrix.index_select(0, remaining_rows).index_select(1, remaining_cols)
+        local_matches = greedy_assignment_gpu(local_costs)
+        repaired_idx[remaining_rows] = remaining_cols[local_matches]
+
+    return repaired_idx
+
+
+def minibatch_sinkhorn_ot(x0, x1, epsilon=0.05, iterations=100):
+    """Entropic OT pairing between noise x0 and data x1 on GPU."""
+    if x0.shape != x1.shape:
+        raise ValueError(f"OT pairing requires equal shapes, got {x0.shape} vs {x1.shape}.")
+
+    n_items, _ = x0.shape
+    if n_items < 2:
+        return x1
+
+    epsilon = float(epsilon)
+    iterations = int(iterations)
+    if epsilon <= 0.0:
+        raise ValueError(f"epsilon must be > 0, got {epsilon}.")
+    if iterations <= 0:
+        raise ValueError(f"iterations must be > 0, got {iterations}.")
+
+    cost_matrix = torch.cdist(x0.float(), x1.float(), p=2).pow(2)
+    cost_scale = cost_matrix.detach().mean().clamp_min(torch.finfo(cost_matrix.dtype).eps)
+    cost_matrix = cost_matrix / cost_scale
+    log_mass = torch.log(torch.tensor(1.0 / n_items, device=cost_matrix.device, dtype=cost_matrix.dtype))
+    u = torch.zeros(n_items, device=cost_matrix.device, dtype=cost_matrix.dtype)
+    v = torch.zeros(n_items, device=cost_matrix.device, dtype=cost_matrix.dtype)
+
+    for _ in range(iterations):
+        u = epsilon * (
+            log_mass - torch.logsumexp((v.unsqueeze(0) - cost_matrix) / epsilon, dim=1)
+        )
+        v = epsilon * (
+            log_mass - torch.logsumexp((u.unsqueeze(1) - cost_matrix) / epsilon, dim=0)
+        )
+
+    log_coupling = (u.unsqueeze(1) + v.unsqueeze(0) - cost_matrix) / epsilon
+    best_matches_idx = torch.argmax(log_coupling, dim=1)
+    best_matches_idx = _repair_duplicate_sinkhorn_matches(log_coupling, cost_matrix, best_matches_idx)
+
+    return x1[best_matches_idx]
+
+
+def _match_noise_to_latents_ot_chunk(flat_latents, flat_noise, *, method, chunk_size=4096, epsilon=0.05, iterations=100):
+    chunk_size = _canonicalize_ot_chunk_size(chunk_size)
+    reordered_noise_chunks = []
+
+    for start_idx in range(0, flat_latents.shape[0], chunk_size):
+        end_idx = min(start_idx + chunk_size, flat_latents.shape[0])
+        chunk_latents = flat_latents[start_idx:end_idx]
+        chunk_noise = flat_noise[start_idx:end_idx]
+
+        if method == "sot":
+            reordered_noise_chunks.append(sliced_optimal_transport(chunk_latents, chunk_noise))
+        elif method == "sinkhorn":
+            reordered_noise_chunks.append(
+                minibatch_sinkhorn_ot(
+                    chunk_latents,
+                    chunk_noise,
+                    epsilon=epsilon,
+                    iterations=iterations,
+                )
+            )
+        else:
+            raise ValueError(f"Unsupported OT method '{method}'. Expected 'sot' or 'sinkhorn'.")
+
+    return torch.cat(reordered_noise_chunks, dim=0)
 
 
 def sliced_optimal_transport(x0, x1):
@@ -192,42 +299,15 @@ def sliced_optimal_transport(x0, x1):
     return x1[matched_indices_x1]
 
 
-'''
-def minibatch_sinkhorn_ot(x0, x1, epsilon=0.01, iterations=100):
-    """Entropic OT pairing between noise x0 and data x1 on GPU."""
-    if x0.shape != x1.shape:
-        raise ValueError(f"OT pairing requires equal shapes, got {x0.shape} vs {x1.shape}.")
-
-    n_items, _ = x0.shape
-    if n_items < 2:
-        return x1
-
-    cost_matrix = torch.cdist(x0.float(), x1.float(), p=2).pow(2)
-    epsilon = float(epsilon)
-    iterations = int(iterations)
-    log_mass = torch.log(torch.tensor(1.0 / n_items, device=cost_matrix.device, dtype=cost_matrix.dtype))
-    u = torch.zeros(n_items, device=cost_matrix.device, dtype=cost_matrix.dtype)
-    v = torch.zeros(n_items, device=cost_matrix.device, dtype=cost_matrix.dtype)
-
-    for _ in range(iterations):
-        u = epsilon * (
-            log_mass - torch.logsumexp((v.unsqueeze(0) - cost_matrix) / epsilon, dim=1)
-        )
-        v = epsilon * (
-            log_mass - torch.logsumexp((u.unsqueeze(1) - cost_matrix) / epsilon, dim=0)
-        )
-
-    coupling = torch.exp((u.unsqueeze(1) + v.unsqueeze(0) - cost_matrix) / epsilon)
-    best_matches_idx = torch.argmax(coupling, dim=1)
-    if torch.unique(best_matches_idx).numel() < n_items:
-        print("WARNING: Sinkhorn algorithm produced non-unique matches, falling back to greedy assignment.")
-        best_matches_idx = greedy_assignment_gpu(cost_matrix)
-
-    return x1[best_matches_idx]
-'''
-
-
-def _match_noise_to_latents_ot(latents, noise, *, chunk_size=4096, epsilon=0.01, iterations=100):
+def match_noise_to_latents_ot(
+    latents,
+    noise,
+    *,
+    method="sot",
+    chunk_size=4096,
+    epsilon=0.05,
+    iterations=100,
+):
     if latents.shape != noise.shape:
         raise ValueError(
             f"Latents/noise shape mismatch for OT sampling: {latents.shape} vs {noise.shape}."
@@ -241,25 +321,30 @@ def _match_noise_to_latents_ot(latents, noise, *, chunk_size=4096, epsilon=0.01,
     if batch_size < 2:
         return noise
 
-    chunk_size = _canonicalize_ot_chunk_size(chunk_size)
-
     # Match whole sequences per batch item, not individual tokens. This keeps
-    # the sliced OT cost linearithmic while letting us process large batches in
-    # manageable chunks.
+    # the OT cost manageable while letting us process large batches in chunks.
     flat_latents = latents.detach().reshape(batch_size, -1)
     flat_noise = noise.reshape(batch_size, -1)
-    reordered_noise_chunks = []
-
-    for start_idx in range(0, batch_size, chunk_size):
-        end_idx = min(start_idx + chunk_size, batch_size)
-        chunk_latents = flat_latents[start_idx:end_idx]
-        chunk_noise = flat_noise[start_idx:end_idx]
-        reordered_noise_chunks.append(
-            sliced_optimal_transport(chunk_latents, chunk_noise)
-        )
-
-    optimized_flat_noise = torch.cat(reordered_noise_chunks, dim=0)
+    optimized_flat_noise = _match_noise_to_latents_ot_chunk(
+        flat_latents,
+        flat_noise,
+        method=_canonicalize_noise_sampling_method(method),
+        chunk_size=chunk_size,
+        epsilon=epsilon,
+        iterations=iterations,
+    )
     return optimized_flat_noise.reshape_as(noise)
+
+
+def _match_noise_to_latents_ot(latents, noise, *, chunk_size=4096, epsilon=0.05, iterations=100):
+    return match_noise_to_latents_ot(
+        latents,
+        noise,
+        method="sot",
+        chunk_size=chunk_size,
+        epsilon=epsilon,
+        iterations=iterations,
+    )
 
 
 def _sample_training_noise(
@@ -278,8 +363,13 @@ def _sample_training_noise(
         generator=generator,
     )
     
-    if noise_sampling_method == "ot":
-        return _match_noise_to_latents_ot(latents, noise, chunk_size=ot_chunk_size)
+    if noise_sampling_method in {"sot", "sinkhorn"}:
+        return match_noise_to_latents_ot(
+            latents,
+            noise,
+            method=noise_sampling_method,
+            chunk_size=ot_chunk_size,
+        )
 
     return noise
 
@@ -288,8 +378,8 @@ def _sample_training_u(latents, *, generator=None, u_sampling_method="uniform"):
     u_sampling_method = _canonicalize_u_sampling_method(u_sampling_method)
 
     if u_sampling_method == "beta":
-        beta_dist = torch.distributions.Beta(5.0, 1.0)
-        return beta_dist.sample((latents.shape[0],)).to(device=latents.device)
+        # Beta(5, 1) has inverse CDF x = u^(1/5), so we can keep it fully seedable.
+        return torch.rand(latents.shape[0], device=latents.device, generator=generator).pow(1.0 / 5.0)
 
     if u_sampling_method == "logit_normal":
         normal_samples = torch.randn(
@@ -300,6 +390,53 @@ def _sample_training_u(latents, *, generator=None, u_sampling_method="uniform"):
         return torch.sigmoid(normal_samples)
 
     return torch.rand(latents.shape[0], device=latents.device, generator=generator)
+
+
+def _resolve_variance_split_indices(variances, tail_proportion=0.05):
+    tail_proportion = float(tail_proportion)
+    if not (0.0 < tail_proportion < 1.0):
+        raise ValueError(f"tail_proportion must be in (0, 1), got {tail_proportion}.")
+
+    variances = variances.detach().float().reshape(-1)
+    d_input = int(variances.numel())
+    if d_input < 2:
+        raise ValueError("Variance-based split requires d_input >= 2.")
+
+    tail_count = max(1, int(round(d_input * tail_proportion)))
+    tail_count = min(tail_count, d_input - 1)
+    tail_indices = torch.topk(variances, k=tail_count, largest=True).indices.sort().values
+    sem_mask = torch.ones(d_input, dtype=torch.bool, device=variances.device)
+    sem_mask[tail_indices] = False
+    sem_indices = torch.arange(d_input, device=variances.device)[sem_mask]
+    return tail_indices, sem_indices
+
+
+def _compute_std_weighted_loss_from_squared_error(squared_error, tail_indices, sem_indices, tail_weights):
+    tail_indices = torch.as_tensor(tail_indices, device=squared_error.device, dtype=torch.long).reshape(-1)
+    sem_indices = torch.as_tensor(sem_indices, device=squared_error.device, dtype=torch.long).reshape(-1)
+    tail_weights = torch.as_tensor(tail_weights, device=squared_error.device, dtype=squared_error.dtype).reshape(-1)
+
+    tail_error = squared_error.index_select(dim=-1, index=tail_indices)
+    if tail_weights.numel() == 1:
+        tail_weights = tail_weights.expand(tail_indices.numel())
+    if tail_weights.numel() != tail_indices.numel():
+        raise ValueError(
+            f"tail_weights must have 1 or {tail_indices.numel()} elements, got {tail_weights.numel()}."
+        )
+
+    tail_weighted_loss = (tail_error * tail_weights.view(1, 1, -1)).mean()
+    tail_region_mse = tail_error.mean()
+    sem_region_mse = squared_error.index_select(dim=-1, index=sem_indices).mean()
+    loss = tail_weighted_loss + sem_region_mse
+    return loss, tail_weighted_loss, tail_region_mse, sem_region_mse
+
+
+def compute_balanced_loss(v_pred, v_target, tail_indices, sem_indices, tail_weights):
+    if v_pred.shape != v_target.shape:
+        raise ValueError(f"Balanced loss expects equal shapes, got {v_pred.shape} vs {v_target.shape}.")
+
+    squared_error = (v_pred - v_target).pow(2)
+    return _compute_std_weighted_loss_from_squared_error(squared_error, tail_indices, sem_indices, tail_weights)
 
 
 # ==========================
@@ -725,10 +862,40 @@ class GLP(nn.Module):
         if d_input < 2:
             raise ValueError("Split output projection requires d_input >= 2.")
 
-        num_tail_dims = max(1, int(round(d_input * proportion)))
-        num_tail_dims = min(num_tail_dims, d_input - 1)
-        tail_indices = torch.topk(var, k=num_tail_dims, largest=True).indices.sort().values
+        tail_indices, _ = _resolve_variance_split_indices(var, tail_proportion=proportion)
         return self.denoiser.configure_split_output(tail_indices)
+
+    def _get_balanced_loss_indices(self, proportion=0.05):
+        proportion = float(proportion)
+        if self.denoiser.model.split_tail_indices:
+            tail_indices = torch.as_tensor(
+                self.denoiser.model.split_tail_indices,
+                dtype=torch.long,
+                device=self.normalizer.var.device,
+            )
+            d_input = int(self.denoiser.model.d_input)
+            sem_mask = torch.ones(d_input, dtype=torch.bool, device=tail_indices.device)
+            sem_mask[tail_indices] = False
+            sem_indices = torch.arange(d_input, device=tail_indices.device)[sem_mask]
+            return tail_indices, sem_indices
+
+        var = self.normalizer.var.detach().float()
+        if var.ndim == 2:
+            if var.shape[0] != 1:
+                raise ValueError(
+                    "Automatic balanced-loss detection only supports single-layer normalization stats."
+                )
+            var = var[0]
+        elif var.ndim != 1:
+            var = var.reshape(-1)
+
+        d_input = self.denoiser.model.d_input
+        if var.numel() != d_input:
+            raise ValueError(
+                f"Normalizer variance shape does not match denoiser d_input: {var.numel()} vs {d_input}."
+            )
+
+        return _resolve_variance_split_indices(var, tail_proportion=proportion)
 
     def save_pretrained(self, path, name=None):
         path = Path(path)
@@ -760,19 +927,6 @@ class GLP(nn.Module):
         self.scheduler.set_timesteps(self.scheduler.config.num_train_timesteps)
         u = torch.full((latents.shape[0],), u, device=latents.device) if isinstance(u, float) else u
 
-        # Legacy two-phase schedule. Disabled while returning to the baseline
-        # Flow Matching setup: plain MSE with uniformly sampled u.
-        # if two_phase and global_step is not None and total_steps is not None:
-        #     if global_step <= 0.4 * total_steps:
-        #         phase = 1
-        #
-        # if phase == 1:
-        #     if u is None:
-        #         u_normal = torch.randn(latents.shape[0], device=latents.device, generator=generator)
-        #         u = torch.sigmoid(u_normal)
-        # else:
-        #     if u is None:
-        #         u = torch.rand(latents.shape[0], device=latents.device, generator=generator)
         if u is None:
             u = _sample_training_u(
                 latents,
@@ -805,73 +959,78 @@ class GLP(nn.Module):
         outputs_f32 = outputs.float()
         target_f32 = target.float()
 
-        # compute loss: baseline MSE, optionally reweighted on rare large
-        # clean-latent coordinates for tail-aware experiments.
         loss_kwargs = {} if loss_kwargs is None else loss_kwargs
-        mse_element = torch.nn.functional.mse_loss(
-            outputs_f32,
-            target_f32,
-            reduction='none',
+        tail_proportion = float(loss_kwargs.get("tail_variance_proportion", 0.05) or 0.05)
+
+        raw_outputs = self.normalizer.denormalize(outputs_f32, layer_idx=layer_idx)
+        raw_target = self.normalizer.denormalize(target_f32, layer_idx=layer_idx)
+        raw_error = (raw_outputs - raw_target).pow(2)
+
+        tail_indices, sem_indices = self._get_balanced_loss_indices(proportion=tail_proportion)
+        norm_error = (outputs_f32 - target_f32).pow(2)
+        norm_var = self.normalizer.get_layer_stat(self.normalizer.var, layer_idx).detach().float().reshape(-1)
+        tail_weights = norm_var.index_select(0, tail_indices.to(device=norm_var.device)).clamp_min(1e-8).sqrt()
+        loss, tail_weighted_mse, tail_region_mse, non_tail_region_mse = _compute_std_weighted_loss_from_squared_error(
+            norm_error,
+            tail_indices.to(device=norm_error.device),
+            sem_indices.to(device=norm_error.device),
+            tail_weights.to(device=norm_error.device),
         )
-        # if self.normalizer.normalization_method == "log_norm":
-        #     mse_element = mse_element * 1e5
+        loss_raw = raw_error.mean().detach()
+        tail_dim_fraction = outputs_f32.new_tensor(tail_indices.numel() / float(self.denoiser.model.d_input))
+        tail_weight_mean = tail_weights.mean().detach()
+        tail_weight_max = tail_weights.max().detach()
 
-        loss_unreduced = mse_element.view(latents.shape[0], -1).mean(dim=-1)
-        tail_base_mse = loss_unreduced.detach().mean()
-        tail_aware_weight = float(loss_kwargs.get("tail_aware_weight", 0.0) or 0.0)
-        tail_aware_min_weight = float(loss_kwargs.get("tail_aware_min_weight", 0.1) or 0.0)
-        tail_aware_max_weight = float(loss_kwargs.get("tail_aware_max_weight", 10.0) or 0.0)
-        tail_aware_start = int(loss_kwargs.get("tail_aware_start", 1000) or 0)
-
-        tail_fraction = outputs_f32.new_tensor(0.0)
-        tail_weight_mean = outputs_f32.new_tensor(1.0)
-        tail_weight_max = outputs_f32.new_tensor(1.0)
-        tail_region_mse = outputs_f32.new_tensor(0.0)
-        non_tail_region_mse = outputs_f32.new_tensor(0.0)
-        with torch.no_grad():
-            raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
-            tail_mask = None
-        
-        if tail_aware_weight > 0.0:
-            with torch.no_grad():
-                raw_magnitude = raw_latents.abs()
-                batch_mean_mag = raw_magnitude.mean(dim=-1, keepdim=True).clamp_min(1e-8)
-                full_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
-                tail_weight_mean = full_multiplier.mean()
-                tail_weight_max = full_multiplier.max()
-                if tail_aware_min_weight > 0.0 or tail_aware_max_weight > 0.0:
-                    clamp_kwargs = {}
-                    if tail_aware_min_weight > 0.0:
-                        clamp_kwargs["min"] = tail_aware_min_weight
-                    if tail_aware_max_weight > 0.0:
-                        clamp_kwargs["max"] = tail_aware_max_weight
-                    full_multiplier = full_multiplier.clamp(**clamp_kwargs)
-
-                if global_step is not None and tail_aware_start > 0 and global_step < tail_aware_start:
-                    blend_factor = float(global_step) / float(tail_aware_start)
-                else:
-                    blend_factor = 1.0
-
-                tail_multiplier = 1.0 + (full_multiplier - 1.0) * blend_factor
-                tail_mask = tail_multiplier > 1.0
-                tail_fraction = tail_mask.float().mean()
-            loss_unreduced = (mse_element * tail_multiplier.to(mse_element.dtype)).view(latents.shape[0], -1).mean(dim=-1)
-        tail_weighted_mse = loss_unreduced.detach().mean()
-        loss = loss_unreduced.mean()
-
-        # Legacy phase-2 pseudo-Huber objective. Kept for future experiments.
-        # u_t = meta["u"].to(device=outputs.device, dtype=torch.float32).view(-1, 1, 1)
-        # w = 1.0 / (1.0 - u_t + 1e-4)
-        # error = outputs_f32 - target_f32
-        # delta = 0.01
-        # loss_raw_hub = (delta ** 2) * (torch.sqrt(1.0 + (error / delta) ** 2) - 1.0)
-        # loss_unreduced = (w * loss_raw_hub).view(latents.shape[0], -1).mean(dim=-1)
+        # Legacy tail-aware weighting, kept in comment for future reuse.
+        # loss_kwargs = {} if loss_kwargs is None else loss_kwargs
+        # mse_element = torch.nn.functional.mse_loss(
+        #     outputs_f32,
+        #     target_f32,
+        #     reduction='none',
+        # )
+        # loss_unreduced = mse_element.view(latents.shape[0], -1).mean(dim=-1)
+        # tail_base_mse = loss_unreduced.detach().mean()
+        # tail_aware_weight = float(loss_kwargs.get("tail_aware_weight", 0.0) or 0.0)
+        # tail_aware_min_weight = float(loss_kwargs.get("tail_aware_min_weight", 0.1) or 0.0)
+        # tail_aware_max_weight = float(loss_kwargs.get("tail_aware_max_weight", 10.0) or 0.0)
+        # tail_aware_start = int(loss_kwargs.get("tail_aware_start", 1000) or 0)
+        # tail_fraction = outputs_f32.new_tensor(0.0)
+        # tail_weight_mean = outputs_f32.new_tensor(1.0)
+        # tail_weight_max = outputs_f32.new_tensor(1.0)
+        # tail_region_mse = outputs_f32.new_tensor(0.0)
+        # non_tail_region_mse = outputs_f32.new_tensor(0.0)
+        # with torch.no_grad():
+        #     raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float()
+        #     tail_mask = None
+        # if tail_aware_weight > 0.0:
+        #     with torch.no_grad():
+        #         raw_magnitude = raw_latents.abs()
+        #         batch_mean_mag = raw_magnitude.mean(dim=-1, keepdim=True).clamp_min(1e-8)
+        #         full_multiplier = (raw_magnitude / batch_mean_mag).pow(tail_aware_weight)
+        #         tail_weight_mean = full_multiplier.mean()
+        #         tail_weight_max = full_multiplier.max()
+        #         if tail_aware_min_weight > 0.0 or tail_aware_max_weight > 0.0:
+        #             clamp_kwargs = {}
+        #             if tail_aware_min_weight > 0.0:
+        #                 clamp_kwargs["min"] = tail_aware_min_weight
+        #             if tail_aware_max_weight > 0.0:
+        #                 clamp_kwargs["max"] = tail_aware_max_weight
+        #             full_multiplier = full_multiplier.clamp(**clamp_kwargs)
+        #         if global_step is not None and tail_aware_start > 0 and global_step < tail_aware_start:
+        #             blend_factor = float(global_step) / float(tail_aware_start)
+        #         else:
+        #             blend_factor = 1.0
+        #         tail_multiplier = 1.0 + (full_multiplier - 1.0) * blend_factor
+        #         tail_mask = tail_multiplier > 1.0
+        #         tail_fraction = tail_mask.float().mean()
+        #     loss_unreduced = (mse_element * tail_multiplier.to(mse_element.dtype)).view(latents.shape[0], -1).mean(dim=-1)
+        # tail_weighted_mse = loss_unreduced.detach().mean()
         # loss = loss_unreduced.mean()
 
         # ===== proper metrics =====
-        if tail_mask is not None:
-            tail_mask = tail_mask.view(-1, tail_mask.shape[-1])
-        raw_latents = raw_latents.view(-1, latents.shape[-1])
+        raw_latents = self.normalizer.denormalize(latents, layer_idx=layer_idx).detach().float().view(-1, latents.shape[-1])
+        raw_outputs = raw_outputs.detach().view(-1, outputs.shape[-1])
+        raw_target = raw_target.detach().view(-1, target.shape[-1])
 
         # relative squared error  
         pred = outputs.view(-1, outputs.shape[-1])
@@ -887,97 +1046,26 @@ class GLP(nn.Module):
         loss_rel = ((pred - tgt) ** 2).sum(dim=-1) / tgt_norm_sq
         loss_rel = loss_rel.mean()
 
-        # map back to raw space
-        pred_raw = self.normalizer.denormalize(pred, layer_idx)
-        tgt_raw  = self.normalizer.denormalize(tgt, layer_idx)
-
         # raw-space MSE (THIS is comparable across normalization)
-        if tail_mask is None:
-            loss_raw = torch.nn.functional.mse_loss(pred_raw, tgt_raw)
-            non_tail_region_mse = loss_raw.detach()
-        else:
-            loss_raw_element = torch.nn.functional.mse_loss(pred_raw, tgt_raw, reduction='none')
-            loss_raw = loss_raw_element.mean()
-            loss_raw_element = loss_raw_element.detach()
-
-            if tail_mask.any():
-                tail_region_mse = loss_raw_element[tail_mask].mean()
-            non_tail_mask = ~tail_mask
-            if non_tail_mask.any():
-                non_tail_region_mse = loss_raw_element[non_tail_mask].mean()
 
         # cosine similarity (KEEP)
         cos_sim = torch.nn.functional.cosine_similarity(pred, tgt, dim=-1).mean()
 
 
-        # --- Legacy diagnostic metrics (disabled) ---
-        # These 5-step manifold/sparsity diagnostics are intentionally left in
-        # the file but disabled while simplifying training back to MSE + AdamW.
-        calc_metrics = False
-        # if global_step is None or (global_step + 1) % 5 == 0:
-        #     calc_metrics = True
 
-        PR, H_SVD, kappa, k_99 = 0.0, 0.0, 0.0, 0.0
-        dead_ratio, hoyer_sparsity = 0.0, 0.0
-        loss_early, loss_mid, loss_late = 0.0, 0.0, 0.0
-        
-        # if False and calc_metrics:
-        #     with torch.no_grad():
-        #         # --- Timestep Loss Mask ---
-        #         # Calculate raw loss per batch item
-        #         u_flat = meta["u"].view(-1).to(device=pred.device)
-                
-        #         mask_early = u_flat < 0.3
-        #         mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
-        #         mask_late = u_flat > 0.7
-                
-        #         loss_early = loss_unreduced[mask_early].mean().item() if mask_early.any() else 0.0
-        #         loss_mid = loss_unreduced[mask_mid].mean().item() if mask_mid.any() else 0.0
-        #         loss_late = loss_unreduced[mask_late].mean().item() if mask_late.any() else 0.0
+        with torch.no_grad():
+            # --- Timestep Loss Mask ---
+            # Track the current normalized MSE by u buckets for debugging and reporting.
+            u_flat = meta["u"].view(-1).to(device=pred.device)
+            loss_unreduced = norm_error.view(latents.shape[0], -1).mean(dim=-1)
 
-        #         # --- Manifold Spectral Measurements ---
-        #         X = latents.view(-1, latents.shape[-1]).float()
-                
-        #         X_centered = X - X.mean(dim=0)
-        #         s = torch.linalg.svdvals(X_centered)
-                
-        #         # Robust Noise Floor Handling
-        #         s_max = s[0]
-        #         s_clean = s[s > (s_max * 1e-6)] 
-        #         lambdas = s_clean ** 2
-        #         sum_lambdas = lambdas.sum()
-                
-        #         # 1. Participation Ratio (PR)
-        #         PR = (sum_lambdas ** 2) / (lambdas ** 2).sum()
-                
-        #         # 2. Spectral Entropy (H_SVD)
-        #         p = lambdas / (sum_lambdas + 1e-9)
-        #         H_SVD = -torch.sum(p * torch.log(p + 1e-9))
-                
-        #         # 3. Truncated Condition Number (kappa)
-        #         ref_idx = min(63, len(s) - 1)
-        #         kappa = s[0] / (s[ref_idx] + 1e-9)
-                
-        #         # 4. Dimension for 99% Variance (k_99)
-        #         cum_var = torch.cumsum(lambdas, dim=0) / sum_lambdas
-        #         k_99 = (cum_var < 0.99).sum().float()
+            mask_early = u_flat < 0.3
+            mask_mid = (u_flat >= 0.3) & (u_flat <= 0.7)
+            mask_late = u_flat > 0.7
 
-        #         # --- Polysemantic/Sparsity Measurements ---
-        #         X_raw = raw_latents.float()
-        #         D = X_raw.shape[-1]
-                
-        #         # 1. Dead Ratio (What % is functionally zero?)
-        #         is_active = (X_raw.abs() > 1e-3).float()
-        #         active_ratio = is_active.mean()
-        #         dead_ratio = 1.0 - active_ratio
-                
-        #         # 2. Hoyer Sparsity (Scale-Invariant Concentration)
-        #         l1_norm = X_raw.abs().sum(dim=-1)
-        #         l2_norm = torch.linalg.vector_norm(X_raw, dim=-1)
-                
-        #         sqrt_d = math.sqrt(D)
-        #         hoyer = (sqrt_d - (l1_norm / (l2_norm + 1e-9))) / (sqrt_d - 1.0)
-        #         hoyer_sparsity = hoyer.mean()
+            loss_early = loss_unreduced[mask_early].mean().item() if mask_early.any() else 0.0
+            loss_mid = loss_unreduced[mask_mid].mean().item() if mask_mid.any() else 0.0
+            loss_late = loss_unreduced[mask_late].mean().item() if mask_late.any() else 0.0
 
         # --- Normalizer Stats ---
         batch_mean = raw_latents.mean()
@@ -995,6 +1083,11 @@ class GLP(nn.Module):
             latents=outputs,
             timesteps=timesteps,
             loss=loss,
+            loss_raw=loss_raw,
+            tail_weighted_mse=tail_weighted_mse,
+            tail_dim_fraction=tail_dim_fraction,
+            tail_weight_mean=tail_weight_mean,
+            tail_weight_max=tail_weight_max,
             tgt_norm=tgt_norm.mean(),
             latent_pre_l2=latent_pre_l2.mean(),
             latent_post_l2=latent_post_l2.mean(),
@@ -1003,23 +1096,9 @@ class GLP(nn.Module):
             latent_pre_l1=latent_pre_l1.mean(),
             latent_post_l1=latent_post_l1.mean(),
             loss_rel=loss_rel,
-            loss_raw=loss_raw,
             cos_sim=cos_sim,
-            tail_aware_min_weight=tail_aware_min_weight,
-            tail_aware_max_weight=tail_aware_max_weight,
-            tail_fraction=tail_fraction,
-            tail_weight_mean=tail_weight_mean,
-            tail_weight_max=tail_weight_max,
-            tail_base_mse=tail_base_mse,
-            tail_weighted_mse=tail_weighted_mse,
             tail_region_mse=tail_region_mse,
             non_tail_region_mse=non_tail_region_mse,
-            PR=PR,
-            H_SVD=H_SVD,
-            kappa=kappa,
-            k_99=k_99,
-            dead_ratio=dead_ratio,
-            hoyer_sparsity=hoyer_sparsity,
             loss_early=loss_early,
             loss_mid=loss_mid,
             loss_late=loss_late,

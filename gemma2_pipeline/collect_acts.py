@@ -119,7 +119,7 @@ def collect_activations(config: ActivationCollectionConfig) -> dict:
 
     documents_processed = 0
     vectors_written = 0
-    rng = np.random.default_rng(config.sample_seed)
+    rng = np.random.default_rng() if config.seed < 0 else np.random.default_rng(config.seed)
 
     text_iter = iter_fineweb_texts(config.fineweb)
     for text_batch in tqdm(

@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 from pathlib import Path
 import shutil
 import sys
@@ -283,7 +284,9 @@ def stream_train(args):
         glp_model = setup_init_glp_model(init_dir, hidden_size, args).to(device)
     else:
         glp_model = setup_glp_model(hidden_size, args).to(device)
-    total_steps = args.total_steps
+    steps_per_epoch = max(1, int(args.total_steps))
+    num_epochs = max(1, int(getattr(args, "num_epochs", 1)))
+    total_training_steps = steps_per_epoch * num_epochs
 
     from functools import partial
 
@@ -292,8 +295,8 @@ def stream_train(args):
         optimizer = torch.optim.AdamW(glp_model.parameters(), lr=args.learning_rate)
         lr_lambda = partial(
             cosine_scheduler_with_warmup,
-            warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_steps),
-            max_steps=total_steps,
+            warmup_steps=int(getattr(args, "warmup_ratio", 0.01) * total_training_steps),
+            max_steps=total_training_steps,
             initial_factor=getattr(args, "initial_factor", 0.01),
             final_factor=getattr(args, "final_factor", 0.01),
         )
@@ -332,10 +335,26 @@ def stream_train(args):
         text_iter = iter_fineweb_texts(fineweb)
         return batch_items(text_iter, args.document_batch_size)
 
-    rng = np.random.default_rng(getattr(args, "sample_seed", 0))
+    seed = int(getattr(args, "seed", -1))
+    if seed >= 0:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    def build_epoch_rng(epoch_idx: int):
+        return np.random.default_rng() if seed < 0 else np.random.default_rng(seed)
+
+    def build_epoch_torch_generator(epoch_idx: int):
+        if seed < 0:
+            return None
+        generator = torch.Generator(device=device if str(device).startswith("cuda") else "cpu")
+        generator.manual_seed(seed)
+        return generator
     
     global_step = 0
-    pbar = tqdm(total=total_steps, desc="Streaming GLP")
+    pbar = tqdm(total=total_training_steps, desc="Streaming GLP")
     
     total_tokens_collected = 0
     next_checkpoint_target = args.checkpoint_token_step if getattr(args, "checkpoint_token_step", None) else float('inf')
@@ -402,9 +421,15 @@ def stream_train(args):
     use_autocast = bool(getattr(args, "use_bf16", True) and ("cuda" in str(device)))
 
     # Use a single streaming pass and update normalization stats cumulatively per chunk.
-    batch_iterator = build_batch_iterator()
-    
-    while global_step < total_steps:
+    for epoch in range(num_epochs):
+        if global_step >= total_training_steps:
+            break
+
+        LOGGER.info("Starting epoch %d/%d.", epoch + 1, num_epochs)
+        batch_iterator = build_batch_iterator()
+        rng = build_epoch_rng(epoch)
+        torch_generator = build_epoch_torch_generator(epoch)
+
         if phase_switch:
             _move_model_to_device(glp_model, offload_device, "GLP model")
             _move_model_to_device(hf_model, device, "Extractor LLM")
@@ -413,252 +438,267 @@ def stream_train(args):
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        
-        stream_storage_dtype = getattr(args, "storage_dtype", "bfloat16")
-        file_size = args.stream_chunk_size * hidden_size
-        np_dtype, dtype_label = get_storage_dtype(stream_storage_dtype)
-        writer = MemmapWriter(output_dir=tmp_dir, file_size=file_size, dtype=np_dtype)
-        (tmp_dir / "dtype.txt").write_text(dtype_label)
-        
-        vectors_written = 0
-        while vectors_written < args.stream_chunk_size:
-            text_batch = next(batch_iterator, None)
-            if not text_batch:
-                LOGGER.warning("Ran out of text batch data.")
-                break
-            
-            vectors = extract_activation_vectors(
-                hf_model=hf_model,
-                hf_tokenizer=hf_tokenizer,
-                text_batch=text_batch,
-                tracedict_config=tracedict_config,
-                padding_side=args.padding_side,
-                token_idx=args.token_idx,
-                forward_batch_size=args.forward_batch_size,
-                max_length=args.max_length,
-                drop_bos=args.drop_bos,
-                rng=rng,
-            )
-            if vectors.numel() == 0: continue
-            
-            remaining = args.stream_chunk_size - vectors_written
-            vectors = vectors[:remaining]
-            if vectors.numel() == 0:
-                continue
 
-            if use_stats:
-                vectors_np = vectors.detach().float().cpu().numpy().astype(np.float64, copy=False)
-
-                if stats is not None:
-                    stats.update(vectors_np)
-
-                if use_rmsnorm_stats and second_moment_sum is not None:
-                    second_moment_sum += np.square(vectors_np).sum(axis=0)
-                    second_moment_count += vectors_np.shape[0]
-
-                if use_iqr_stats and iqr_q25 is not None and iqr_median is not None and iqr_q75 is not None:
-                    batch_count = vectors_np.shape[0]
-                    chunk_q25 = np.percentile(vectors_np, 25, axis=0)
-                    chunk_median = np.percentile(vectors_np, 50, axis=0)
-                    chunk_q75 = np.percentile(vectors_np, 75, axis=0)
-                    if iqr_count == 0:
-                        iqr_q25 = chunk_q25
-                        iqr_median = chunk_median
-                        iqr_q75 = chunk_q75
-                    else:
-                        total = iqr_count + batch_count
-                        iqr_q25 = (iqr_q25 * iqr_count + chunk_q25 * batch_count) / total
-                        iqr_median = (iqr_median * iqr_count + chunk_median * batch_count) / total
-                        iqr_q75 = (iqr_q75 * iqr_count + chunk_q75 * batch_count) / total
-                    iqr_count += batch_count
-
-                if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:
-                    # Center the vectors using the current running mean before quantile calculation
-                    centered_vectors = vectors_np - stats.mean
-                    chunk_q = np.percentile(np.abs(centered_vectors), quantile_percent, axis=0)
-                    batch_count = vectors_np.shape[0]
-                    if quantile_count == 0:
-                        quantile_scale = chunk_q
-                    else:
-                        total = quantile_count + batch_count
-                        quantile_scale = (quantile_scale * quantile_count + chunk_q * batch_count) / total
-                    quantile_count += batch_count
-
-            written = write_vectors_to_memmap(
-                writer,
-                vectors,
-                stream_storage_dtype,
-            )
-            if written == 0:
-                continue
-
-            vectors_written += written
-            
-        writer.flush()
-        if vectors_written == 0:
-            LOGGER.warning("No vectors generated in this chunk (dataset exhausted?). Halting training loop early.")
-            break
-
-        normalizer_device = glp_model.normalizer.mean.device
-
-        if use_gaussian_stats and stats is not None:
-            mean, var = stats.finalize()
-            glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=normalizer_device)
-            glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=normalizer_device)
-            LOGGER.info("Updated cumulative gaussian stats from %d vectors.", stats.count)
-            
-        elif use_rmsnorm_stats and second_moment_sum is not None:
-            rms_sq = np.maximum(second_moment_sum / max(second_moment_count, 1), 1e-8)
-            glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=normalizer_device)
-            glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=normalizer_device)
-            LOGGER.info("Updated cumulative rmsnorm stats from %d vectors.", second_moment_count)
-
-        elif use_iqr_stats and iqr_median is not None and iqr_q25 is not None and iqr_q75 is not None:
-            iqr = np.maximum(iqr_q75 - iqr_q25, 1e-6)
-            glp_model.normalizer.mean = torch.tensor(iqr_median, dtype=torch.float32, device=normalizer_device)
-            glp_model.normalizer.var = torch.tensor(iqr * iqr, dtype=torch.float32, device=normalizer_device)
-            LOGGER.info("Updated cumulative iqr stats from %d vectors.", iqr_count)
-            
-        elif use_quantile_stats and quantile_scale is not None:
-            scale = np.maximum(quantile_scale, 1e-6)
-            glp_model.normalizer.mean = torch.tensor(stats.mean, dtype=torch.float32, device=normalizer_device)
-            glp_model.normalizer.var = torch.tensor(scale * scale, dtype=torch.float32, device=normalizer_device)
-            LOGGER.info("Updated cumulative quantile-%s stats from %d vectors.", format_quantile_percent(quantile_percent), quantile_count)
-            
-        else:
-            LOGGER.info("Using normalization_method=%s; skipped cumulative stat updates.", normalization_method)
-
-        if phase_switch:
-            _move_model_to_device(hf_model, offload_device, "Extractor LLM")
-            _move_model_to_device(glp_model, device, "GLP model")
-            _cleanup_cuda_cache()
-
-        if opt_adamw is None:
-            if split_requested and not glp_model.denoiser.model.split:
-                if use_stats:
-                    split_tail_indices = glp_model.configure_split_output_from_normalizer(
-                        proportion=getattr(args, "split_proportion", 0.1)
-                    )
-                    LOGGER.info(
-                        "Configured split output projection with %d/%d top-variance dimensions.",
-                        len(split_tail_indices),
-                        hidden_size,
-                    )
-                else:
-                    LOGGER.warning(
-                        "Requested split output projection with normalization_method=%s, "
-                        "but this mode has no variance stats; using the normal output projection.",
-                        normalization_method,
-                    )
-            opt_adamw, sched_adamw = create_optimizer_and_scheduler()
-            if init_dir is not None and getattr(args, "load_opt", False):
-                opt_path = init_dir / "opt.pt"
-                if opt_path.exists():
-                    opt_state = torch.load(opt_path, map_location=device)
-                    opt_adamw.load_state_dict(opt_state["optimizer"])
-                    if "scheduler" in opt_state:
-                        sched_adamw.load_state_dict(opt_state["scheduler"])
-                    LOGGER.info("Loaded optimizer state from %s.", opt_path)
-                else:
-                    LOGGER.warning("Requested --load-opt but no optimizer state found at %s.", opt_path)
-        
-        
-        train_dataset = load_activation_dataset(str(tmp_dir))
-        train_dataloader = get_activation_dataloader(
-            dataset=train_dataset,
-            batch_size=args.batch_size,
-            normalizer=glp_model.normalizer,
-            shuffle=getattr(args, "shuffle", True),
-        )
-        
+        epoch_step = 0
+        epoch_exhausted = False
         glp_model.train()
-        for batch in train_dataloader:
-            if global_step >= total_steps: break
-            
-            batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
+        while epoch_step < steps_per_epoch and global_step < total_training_steps:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
 
-            loss_kwargs = {
-                "tail_aware_weight": getattr(args, "tail_aware_weight", 0.0),
-                "tail_aware_start": getattr(args, "tail_aware_start", 1000),
-                "tail_aware_min_weight": getattr(args, "tail_aware_min_weight", 0.1),
-                "tail_aware_max_weight": getattr(args, "tail_aware_max_weight", 10.0),
-            }
+            stream_storage_dtype = getattr(args, "storage_dtype", "bfloat16")
+            file_size = args.stream_chunk_size * hidden_size
+            np_dtype, dtype_label = get_storage_dtype(stream_storage_dtype)
+            writer = MemmapWriter(output_dir=tmp_dir, file_size=file_size, dtype=np_dtype)
+            (tmp_dir / "dtype.txt").write_text(dtype_label)
 
-            with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
-                outputs = glp_model(
-                    **batch,
-                    global_step=global_step,
-                    total_steps=total_steps,
-                    loss_kwargs=loss_kwargs,
+            vectors_written = 0
+            while vectors_written < args.stream_chunk_size and epoch_step < steps_per_epoch and global_step < total_training_steps:
+                text_batch = next(batch_iterator, None)
+                if not text_batch:
+                    LOGGER.warning("Ran out of text batch data in epoch %d/%d.", epoch + 1, num_epochs)
+                    epoch_exhausted = True
+                    break
+
+                vectors = extract_activation_vectors(
+                    hf_model=hf_model,
+                    hf_tokenizer=hf_tokenizer,
+                    text_batch=text_batch,
+                    tracedict_config=tracedict_config,
+                    padding_side=args.padding_side,
+                    token_idx=args.token_idx,
+                    forward_batch_size=args.forward_batch_size,
+                    max_length=args.max_length,
+                    drop_bos=args.drop_bos,
+                    rng=rng,
                 )
-                loss = outputs.loss
-                tgt_norm = outputs.tgt_norm
-                latent_pre_l2 = outputs.latent_pre_l2
-                latent_post_l2 = outputs.latent_post_l2
-                latent_pre_l1 = outputs.latent_pre_l1
-                latent_post_l1 = outputs.latent_post_l1
-                cos_sim = outputs.cos_sim
-                loss_rel = outputs.loss_rel
-                loss_raw = outputs.loss_raw
-                
-            loss.backward()
-            grad_clip_threshold = float(getattr(args, "gradient_clipping_threshold", 1.0))
-            max_grad_norm = grad_clip_threshold if grad_clip_threshold > 0.0 else float("inf")
-            grad_norm = torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
-            grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
-            
-            opt_adamw.step()
-            opt_adamw.zero_grad()
-            sched_adamw.step()
-            
-            global_step += 1
-            pbar.update(1)
-            pbar.set_description(f"Streaming step {global_step}/{total_steps} (loss: {loss.item():.4f})")
-            
-            log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 10)))
-            if wandb_run and global_step % log_every_n_steps == 0:
-                log_dict = {
-                    "train/loss": loss.item(),
-                    "train/loss_rel": loss_rel.item(),
-                    "train/loss_raw": loss_raw.item(),
-                    "train/grad_norm": grad_norm_value,
-                    "train/cos_sim": cos_sim.item(),
-                    "train/target_norm": tgt_norm.item(),
-                    "train/latent_pre_l2": latent_pre_l2.item(),
-                    "train/latent_post_l2": latent_post_l2.item(),
-                    "train/latent_pre_l1": latent_pre_l1.item(),
-                    "train/latent_post_l1": latent_post_l1.item(),
-                    "train/batch_mean": outputs.batch_mean.item(),
-                    "train/batch_var_max": outputs.batch_var.item(),
-                    "train/global_mean": outputs.global_mean.item(),
-                    "train/global_var_max": outputs.global_var.item(),
-                    "train/tail_fraction": outputs.tail_fraction.item(),
-                    "train/tail_weight_mean": outputs.tail_weight_mean.item(),
-                    "train/tail_weight_max": outputs.tail_weight_max.item(),
-                    "train/tail_base_mse": outputs.tail_base_mse.item(),
-                    "train/tail_weighted_mse": outputs.tail_weighted_mse.item(),
-                    "train/tail_region_mse": outputs.tail_region_mse.item(),
-                    "train/non_tail_region_mse": outputs.non_tail_region_mse.item(),
-                }
-                log_dict["train/lr_adamw"] = sched_adamw.get_last_lr()[0]
-                wandb_run.log(log_dict, step=global_step)
+                if vectors.numel() == 0:
+                    continue
 
-        total_tokens_collected += vectors_written
-        if total_tokens_collected >= next_checkpoint_target:
-            def format_tokens(t):
-                if t >= 1_000_000 and t % 1_000_000 == 0:
-                    return f"{t // 1_000_000}M"
-                if t >= 1_000 and t % 1_000 == 0:
-                    return f"{t // 1_000}K"
-                return str(t)
-            
-            milestone_str = format_tokens(int(next_checkpoint_target))
-            milestone_dir = Path(args.save_root) / args.run_name / milestone_str
-            save_glp_checkpoint(milestone_dir)
-            LOGGER.info(f"Saved checkpoint at {total_tokens_collected} tokens to {milestone_dir}")
-            
-            while next_checkpoint_target <= total_tokens_collected:
-                next_checkpoint_target += getattr(args, "checkpoint_token_step", float('inf'))
+                remaining = args.stream_chunk_size - vectors_written
+                vectors = vectors[:remaining]
+                if vectors.numel() == 0:
+                    continue
+
+                if use_stats:
+                    vectors_np = vectors.detach().float().cpu().numpy().astype(np.float64, copy=False)
+
+                    if stats is not None:
+                        stats.update(vectors_np)
+
+                    if use_rmsnorm_stats and second_moment_sum is not None:
+                        second_moment_sum += np.square(vectors_np).sum(axis=0)
+                        second_moment_count += vectors_np.shape[0]
+
+                    if use_iqr_stats and iqr_q25 is not None and iqr_median is not None and iqr_q75 is not None:
+                        batch_count = vectors_np.shape[0]
+                        chunk_q25 = np.percentile(vectors_np, 25, axis=0)
+                        chunk_median = np.percentile(vectors_np, 50, axis=0)
+                        chunk_q75 = np.percentile(vectors_np, 75, axis=0)
+                        if iqr_count == 0:
+                            iqr_q25 = chunk_q25
+                            iqr_median = chunk_median
+                            iqr_q75 = chunk_q75
+                        else:
+                            total = iqr_count + batch_count
+                            iqr_q25 = (iqr_q25 * iqr_count + chunk_q25 * batch_count) / total
+                            iqr_median = (iqr_median * iqr_count + chunk_median * batch_count) / total
+                            iqr_q75 = (iqr_q75 * iqr_count + chunk_q75 * batch_count) / total
+                        iqr_count += batch_count
+
+                    if use_quantile_stats and quantile_scale is not None and quantile_percent is not None:
+                        centered_vectors = vectors_np - stats.mean
+                        chunk_q = np.percentile(np.abs(centered_vectors), quantile_percent, axis=0)
+                        batch_count = vectors_np.shape[0]
+                        if quantile_count == 0:
+                            quantile_scale = chunk_q
+                        else:
+                            total = quantile_count + batch_count
+                            quantile_scale = (quantile_scale * quantile_count + chunk_q * batch_count) / total
+                        quantile_count += batch_count
+
+                written = write_vectors_to_memmap(
+                    writer,
+                    vectors,
+                    stream_storage_dtype,
+                )
+                if written == 0:
+                    continue
+
+                vectors_written += written
+
+            writer.flush()
+            if vectors_written == 0:
+                LOGGER.warning("No vectors generated in epoch %d/%d (dataset exhausted?).", epoch + 1, num_epochs)
+                break
+
+            normalizer_device = glp_model.normalizer.mean.device
+
+            if use_gaussian_stats and stats is not None:
+                mean, var = stats.finalize()
+                glp_model.normalizer.mean = torch.tensor(mean, dtype=torch.float32, device=normalizer_device)
+                glp_model.normalizer.var = torch.tensor(var, dtype=torch.float32, device=normalizer_device)
+                LOGGER.info("Updated cumulative gaussian stats from %d vectors.", stats.count)
+
+            elif use_rmsnorm_stats and second_moment_sum is not None:
+                rms_sq = np.maximum(second_moment_sum / max(second_moment_count, 1), 1e-8)
+                glp_model.normalizer.mean = torch.zeros(hidden_size, dtype=torch.float32, device=normalizer_device)
+                glp_model.normalizer.var = torch.tensor(rms_sq, dtype=torch.float32, device=normalizer_device)
+                LOGGER.info("Updated cumulative rmsnorm stats from %d vectors.", second_moment_count)
+
+            elif use_iqr_stats and iqr_median is not None and iqr_q25 is not None and iqr_q75 is not None:
+                iqr = np.maximum(iqr_q75 - iqr_q25, 1e-6)
+                glp_model.normalizer.mean = torch.tensor(iqr_median, dtype=torch.float32, device=normalizer_device)
+                glp_model.normalizer.var = torch.tensor(iqr * iqr, dtype=torch.float32, device=normalizer_device)
+                LOGGER.info("Updated cumulative iqr stats from %d vectors.", iqr_count)
+
+            elif use_quantile_stats and quantile_scale is not None:
+                scale = np.maximum(quantile_scale, 1e-6)
+                glp_model.normalizer.mean = torch.tensor(stats.mean, dtype=torch.float32, device=normalizer_device)
+                glp_model.normalizer.var = torch.tensor(scale * scale, dtype=torch.float32, device=normalizer_device)
+                LOGGER.info("Updated cumulative quantile-%s stats from %d vectors.", format_quantile_percent(quantile_percent), quantile_count)
+
+            else:
+                LOGGER.info("Using normalization_method=%s; skipped cumulative stat updates.", normalization_method)
+
+            if opt_adamw is None:
+                if split_requested and not glp_model.denoiser.model.split:
+                    if use_stats:
+                        split_tail_indices = glp_model.configure_split_output_from_normalizer(
+                            proportion=getattr(args, "split_proportion", 0.1)
+                        )
+                        LOGGER.info(
+                            "Configured split output projection with %d/%d top-variance dimensions.",
+                            len(split_tail_indices),
+                            hidden_size,
+                        )
+                    else:
+                        LOGGER.warning(
+                            "Requested split output projection with normalization_method=%s, "
+                            "but this mode has no variance stats; using the normal output projection.",
+                            normalization_method,
+                        )
+                opt_adamw, sched_adamw = create_optimizer_and_scheduler()
+                if init_dir is not None and getattr(args, "load_opt", False):
+                    opt_path = init_dir / "opt.pt"
+                    if opt_path.exists():
+                        opt_state = torch.load(opt_path, map_location=device)
+                        opt_adamw.load_state_dict(opt_state["optimizer"])
+                        if "scheduler" in opt_state:
+                            sched_adamw.load_state_dict(opt_state["scheduler"])
+                        LOGGER.info("Loaded optimizer state from %s.", opt_path)
+                    else:
+                        LOGGER.warning("Requested --load-opt but no optimizer state found at %s.", opt_path)
+
+            train_dataset = load_activation_dataset(str(tmp_dir))
+            train_dataloader = get_activation_dataloader(
+                dataset=train_dataset,
+                batch_size=args.batch_size,
+                normalizer=glp_model.normalizer,
+                shuffle=getattr(args, "shuffle", True),
+            )
+
+            for batch in train_dataloader:
+                if epoch_step >= steps_per_epoch or global_step >= total_training_steps:
+                    break
+
+                batch = {k: v.to(device) if v is not None else None for k, v in batch.items()}
+
+                with torch.autocast(device_type="cuda" if use_autocast else "cpu", dtype=torch.bfloat16, enabled=use_autocast):
+                    outputs = glp_model(
+                        **batch,
+                        global_step=global_step,
+                        total_steps=total_training_steps,
+                        generator=torch_generator,
+                    )
+                    loss = outputs.loss
+                    loss_raw = outputs.loss_raw
+                    tail_weighted_mse = outputs.tail_weighted_mse
+                    tail_region_mse = outputs.tail_region_mse
+                    non_tail_region_mse = outputs.non_tail_region_mse
+                    loss_early = outputs.loss_early
+                    loss_mid = outputs.loss_mid
+                    loss_late = outputs.loss_late
+                    tail_weight_mean = outputs.tail_weight_mean
+                    tail_weight_max = outputs.tail_weight_max
+                    tgt_norm = outputs.tgt_norm
+                    latent_pre_l2 = outputs.latent_pre_l2
+                    latent_post_l2 = outputs.latent_post_l2
+                    latent_pre_l1 = outputs.latent_pre_l1
+                    latent_post_l1 = outputs.latent_post_l1
+                    cos_sim = outputs.cos_sim
+                    loss_rel = outputs.loss_rel
+
+                loss.backward()
+                grad_clip_threshold = float(getattr(args, "gradient_clipping_threshold", 1.0))
+                max_grad_norm = grad_clip_threshold if grad_clip_threshold > 0.0 else float("inf")
+                grad_norm = torch.nn.utils.clip_grad_norm_(glp_model.parameters(), max_grad_norm)
+                grad_norm_value = float(grad_norm.detach().float().cpu() if torch.is_tensor(grad_norm) else grad_norm)
+
+                opt_adamw.step()
+                opt_adamw.zero_grad()
+                sched_adamw.step()
+
+                global_step += 1
+                epoch_step += 1
+                pbar.update(1)
+                pbar.set_description(
+                    f"Epoch {epoch + 1}/{num_epochs} step {epoch_step}/{steps_per_epoch} "
+                    f"(global {global_step}/{total_training_steps}, loss: {loss.item():.4f})"
+                )
+
+                log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 10)))
+                if wandb_run and global_step % log_every_n_steps == 0:
+                    log_dict = {
+                        "train/epoch": epoch + 1,
+                        "train/loss": loss.item(),
+                        "train/loss_rel": loss_rel.item(),
+                        "train/loss_raw": loss_raw.item(),
+                        "train/tail_weighted_mse": tail_weighted_mse.item(),
+                        "train/loss_early": loss_early,
+                        "train/loss_mid": loss_mid,
+                        "train/loss_late": loss_late,
+                        "train/grad_norm": grad_norm_value,
+                        "train/cos_sim": cos_sim.item(),
+                        "train/target_norm": tgt_norm.item(),
+                        "train/latent_pre_l2": latent_pre_l2.item(),
+                        "train/latent_post_l2": latent_post_l2.item(),
+                        "train/latent_pre_l1": latent_pre_l1.item(),
+                        "train/latent_post_l1": latent_post_l1.item(),
+                        "train/batch_mean": outputs.batch_mean.item(),
+                        "train/batch_var_max": outputs.batch_var.item(),
+                        "train/global_mean": outputs.global_mean.item(),
+                        "train/global_var_max": outputs.global_var.item(),
+                        "train/tail_dim_fraction": outputs.tail_dim_fraction.item(),
+                        "train/tail_weight_mean": tail_weight_mean.item(),
+                        "train/tail_weight_max": tail_weight_max.item(),
+                        "train/tail_region_mse": tail_region_mse.item(),
+                        "train/non_tail_region_mse": non_tail_region_mse.item(),
+                    }
+                    log_dict["train/lr_adamw"] = sched_adamw.get_last_lr()[0]
+                    wandb_run.log(log_dict, step=global_step)
+
+            total_tokens_collected += vectors_written
+            if total_tokens_collected >= next_checkpoint_target:
+                def format_tokens(t):
+                    if t >= 1_000_000 and t % 1_000_000 == 0:
+                        return f"{t // 1_000_000}M"
+                    if t >= 1_000 and t % 1_000 == 0:
+                        return f"{t // 1_000}K"
+                    return str(t)
+
+                milestone_str = format_tokens(int(next_checkpoint_target))
+                milestone_dir = Path(args.save_root) / args.run_name / milestone_str
+                save_glp_checkpoint(milestone_dir)
+                LOGGER.info(f"Saved checkpoint at {total_tokens_collected} tokens to {milestone_dir}")
+
+                while next_checkpoint_target <= total_tokens_collected:
+                    next_checkpoint_target += getattr(args, "checkpoint_token_step", float('inf'))
+
+            if epoch_exhausted:
+                LOGGER.info("Epoch %d/%d exhausted the dataset stream.", epoch + 1, num_epochs)
+                break
 
     pbar.close()
     if wandb_run: wandb_run.finish()
